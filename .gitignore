@@ -24,3 +24,4 @@ apps/web/tsconfig.tsbuildinfo
 playwright-report/
 test-results/
 .env
+README.md
