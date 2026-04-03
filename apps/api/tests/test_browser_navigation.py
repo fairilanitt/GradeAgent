@@ -47,11 +47,52 @@ class StubBrowserSession:
         self.navigated_to = url
 
 
+class StubBrowserSessionWithTabs:
+    def __init__(self) -> None:
+        self.focused_target = None
+        self.switched_target_id: str | None = None
+        self.tabs = [
+            SimpleNamespace(target_id="blank-tab", url="about:blank", title=""),
+            SimpleNamespace(target_id="exam-tab", url="https://www.sanomapro.fi/koe/123", title="Exam"),
+        ]
+
+    def get_focused_target(self):
+        return self.focused_target
+
+    async def get_current_page_url(self) -> str:
+        return "about:blank"
+
+    async def get_current_page(self):
+        return None
+
+    async def get_tabs(self):
+        return self.tabs
+
+    async def on_SwitchTabEvent(self, event) -> str:
+        self.switched_target_id = event.target_id
+        for tab in self.tabs:
+            if tab.target_id == event.target_id:
+                self.focused_target = SimpleNamespace(url=tab.url)
+                return tab.target_id
+        raise RuntimeError("Unknown target id")
+
+
 def test_get_current_page_url_uses_browser_session_api() -> None:
     service = BrowserNavigationService(Settings())
     current_url = asyncio.run(service.get_current_page_url(StubBrowserSession()))
 
     assert current_url == "https://example.com/exam"
+
+
+def test_get_current_page_url_switches_to_best_existing_non_blank_tab() -> None:
+    settings = Settings().model_copy(update={"browser_start_url": "https://www.sanomapro.fi/auth/login/"})
+    service = BrowserNavigationService(settings)
+
+    session = StubBrowserSessionWithTabs()
+    current_url = asyncio.run(service.get_current_page_url(session))
+
+    assert current_url == "https://www.sanomapro.fi/koe/123"
+    assert session.switched_target_id == "exam-tab"
 
 
 def test_launch_interactive_browser_opens_default_login_page(monkeypatch) -> None:

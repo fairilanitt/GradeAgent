@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from browser_use import Agent, BrowserSession
+from browser_use.browser.events import SwitchTabEvent
 from browser_use.skill_cli.utils import find_chrome_executable, get_chrome_profile_path
 
 from app.config import Settings, get_settings
@@ -104,6 +105,44 @@ class BrowserNavigationService:
             "vision_detail_level": self.settings.browser_agent_vision_detail_level,
             "llm_timeout": self.settings.browser_agent_llm_timeout_seconds,
         }
+
+    def _is_usable_page_url(self, url: str | None) -> bool:
+        if not url:
+            return False
+        normalized = url.strip().lower()
+        return normalized not in {
+            "about:blank",
+            "chrome://newtab/",
+            "chrome://new-tab-page/",
+        } and not normalized.startswith("chrome://")
+
+    async def _switch_to_target(self, browser_session: BrowserSession, target_id: str) -> None:
+        await browser_session.on_SwitchTabEvent(SwitchTabEvent(target_id=target_id))
+
+    async def _focus_best_available_page(self, browser_session: BrowserSession) -> str | None:
+        focused_target = browser_session.get_focused_target()
+        focused_url = getattr(focused_target, "url", None)
+        if self._is_usable_page_url(focused_url):
+            return focused_url
+
+        tabs = await browser_session.get_tabs()
+        candidates = [tab for tab in tabs if self._is_usable_page_url(getattr(tab, "url", None))]
+        if not candidates:
+            return None
+
+        preferred_host = urlparse(self.settings.browser_start_url).netloc.lower() if self.settings.browser_start_url else ""
+        selected_tab = candidates[-1]
+        if preferred_host:
+            for tab in reversed(candidates):
+                tab_host = urlparse(tab.url).netloc.lower()
+                if tab_host == preferred_host or tab_host.endswith(f".{preferred_host}") or preferred_host.endswith(
+                    f".{tab_host}"
+                ):
+                    selected_tab = tab
+                    break
+
+        await self._switch_to_target(browser_session, selected_tab.target_id)
+        return selected_tab.url
 
     def _bootstrap_profile_from_system_chrome(self, target_root: Path) -> None:
         source_root_str = get_chrome_profile_path(None)
@@ -335,13 +374,18 @@ class BrowserNavigationService:
 
     async def get_current_page_url(self, browser_session: BrowserSession) -> str | None:
         current_url = await browser_session.get_current_page_url()
-        if current_url:
+        if self._is_usable_page_url(current_url):
             return current_url
 
         page = await browser_session.get_current_page()
         if page is None:
-            return None
-        return await page.get_url()
+            return await self._focus_best_available_page(browser_session)
+
+        page_url = await page.get_url()
+        if self._is_usable_page_url(page_url):
+            return page_url
+
+        return await self._focus_best_available_page(browser_session)
 
     def build_exam_grading_task(self, payload: ExamSessionGradingTaskCreate) -> str:
         action_instruction = (
