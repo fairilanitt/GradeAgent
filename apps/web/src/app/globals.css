@@ -1,0 +1,328 @@
+:root {
+  color-scheme: dark;
+  --bg: #071015;
+  --bg-elevated: rgba(10, 19, 27, 0.92);
+  --panel: rgba(7, 14, 20, 0.92);
+  --panel-strong: rgba(9, 17, 24, 0.98);
+  --line: rgba(126, 231, 135, 0.18);
+  --line-strong: rgba(126, 231, 135, 0.42);
+  --ink: #effff4;
+  --muted: #98b1a0;
+  --green: #7ee787;
+  --cyan: #78dce8;
+  --amber: #ffbf69;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top, rgba(120, 220, 232, 0.16), transparent 22%),
+    radial-gradient(circle at right, rgba(126, 231, 135, 0.12), transparent 28%),
+    linear-gradient(180deg, #04080b 0%, var(--bg) 52%, #04080b 100%);
+  color: var(--ink);
+  font-family:
+    "IBM Plex Mono",
+    "Cascadia Code",
+    "SFMono-Regular",
+    Consolas,
+    monospace;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+code {
+  font-family: inherit;
+}
+
+.terminalShell {
+  width: min(1200px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 64px;
+  display: grid;
+  gap: 18px;
+}
+
+.terminalFrame,
+.statCard,
+.criterionCard {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--panel-strong), var(--panel));
+  box-shadow: var(--shadow);
+}
+
+.terminalFrame {
+  border-radius: 20px;
+  padding: 22px;
+}
+
+.frameHeader,
+.criterionHeader,
+.metricRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.frameTitle,
+.statLabel,
+.stepName {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.78rem;
+  color: var(--green);
+}
+
+.statusBadge,
+.scoreChip,
+.tag {
+  border: 1px solid var(--line-strong);
+  background: rgba(126, 231, 135, 0.08);
+  color: var(--green);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.terminalPrompt,
+.tiny {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.heroTitle {
+  margin: 14px 0 10px;
+  font-size: clamp(2.1rem, 3.8vw, 4.6rem);
+  line-height: 0.96;
+  max-width: 900px;
+}
+
+.cliLead,
+.stepDetail,
+.textBlock,
+.routeModel,
+.statMeta,
+.metricRow span,
+.quoteBlock span,
+.quoteBlock p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.cliLead {
+  max-width: 880px;
+  margin: 0;
+}
+
+.inlineCode {
+  color: var(--cyan);
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.commandLink,
+.secondaryLink {
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 0.92rem;
+}
+
+.commandLink {
+  background: var(--green);
+  color: #071015;
+  font-weight: 700;
+}
+
+.secondaryLink {
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.statGrid,
+.consoleGrid,
+.criterionGrid {
+  display: grid;
+  gap: 16px;
+}
+
+.statGrid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.consoleGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.criterionGrid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin-top: 16px;
+}
+
+.statCard {
+  border-radius: 18px;
+  padding: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.statValue {
+  font-size: 1.3rem;
+  line-height: 1.2;
+}
+
+.routeTable,
+.metricList,
+.stepList,
+.tagList {
+  display: grid;
+  gap: 12px;
+}
+
+.routeRow,
+.stepItem {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(126, 231, 135, 0.12);
+}
+
+.routeRow:first-child,
+.stepItem:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.routeModel {
+  display: block;
+  color: var(--ink);
+  margin-top: 4px;
+}
+
+.stepList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.stepStatus {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 220, 232, 0.28);
+  background: rgba(120, 220, 232, 0.08);
+  color: var(--cyan);
+  font-weight: 700;
+}
+
+.metricRow {
+  padding: 10px 0;
+  border-top: 1px solid rgba(126, 231, 135, 0.12);
+}
+
+.metricRow:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.metricRow strong {
+  color: var(--ink);
+  text-align: right;
+}
+
+.terminalPre,
+.textBlock {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminalPre {
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(120, 220, 232, 0.16);
+  color: var(--cyan);
+  line-height: 1.7;
+  overflow-x: auto;
+}
+
+.submissionCard {
+  min-height: 100%;
+}
+
+.textBlock {
+  font-size: 1rem;
+}
+
+.criterionCard {
+  border-radius: 16px;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.scoreChip {
+  align-self: flex-start;
+  color: var(--amber);
+  border-color: rgba(255, 191, 105, 0.34);
+  background: rgba(255, 191, 105, 0.08);
+}
+
+.quoteBlock {
+  margin: 0;
+  padding: 14px;
+  border-left: 3px solid var(--cyan);
+  background: rgba(120, 220, 232, 0.06);
+  border-radius: 0 12px 12px 0;
+}
+
+.quoteBlock p {
+  margin: 0 0 8px;
+  color: var(--ink);
+}
+
+.tagList {
+  grid-template-columns: repeat(auto-fit, minmax(120px, max-content));
+}
+
+@media (max-width: 860px) {
+  .consoleGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .terminalShell {
+    width: min(100%, calc(100% - 24px));
+    padding-top: 20px;
+  }
+
+  .terminalFrame,
+  .statCard,
+  .criterionCard {
+    padding: 18px;
+  }
+
+  .heroTitle {
+    font-size: 2rem;
+  }
+}
