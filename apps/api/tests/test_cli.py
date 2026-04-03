@@ -35,5 +35,5 @@ def test_exam_grading_prompt_contains_site_specific_rules() -> None:
     assert "Poistu oppilaan vastauksista" in prompt
     assert "Pisteytys" in prompt
     assert "dark blue" in prompt
-    assert "Never use the browser back button" in prompt
+    assert "Never use browser back/history" in prompt
     assert "award partial points conservatively" in prompt

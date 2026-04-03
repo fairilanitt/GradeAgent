@@ -202,10 +202,13 @@ def test_runtime_overview_exposes_router_configuration(client) -> None:
     response.raise_for_status()
     payload = response.json()
     assert payload["model_router_provider"] == "heuristic"
-    assert payload["model_router_simple_model"] == "qwen3:4b"
-    assert payload["model_router_complex_model"] == "qwen3:8b"
+    assert payload["model_router_simple_model"] == "qwen3.5:4b"
+    assert payload["model_router_complex_model"] == "qwen3.5:9b"
+    assert payload["ollama_simple_reasoning_mode"] is False
+    assert payload["ollama_complex_reasoning_mode"] == "high"
     assert payload["browser_agent_provider"] == "ollama"
-    assert payload["browser_agent_model"] == "qwen3-vl:4b"
+    assert payload["browser_agent_model"] == "qwen3.5:9b"
+    assert payload["browser_agent_use_thinking"] is False
     assert payload["ollama_host"] == "http://127.0.0.1:11439"
     assert payload["browser_use_system_chrome"] is False
     assert payload["browser_chrome_profile_directory"] == "Default"

@@ -6,7 +6,6 @@ from typing import Any, Literal
 import httpx
 from browser_use import ChatAnthropic as BrowserUseChatAnthropic
 from browser_use import ChatGoogle as BrowserUseChatGoogle
-from browser_use import ChatOllama as BrowserUseChatOllama
 from browser_use import ChatOpenAI as BrowserUseChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -15,6 +14,7 @@ from langchain_ollama import ChatOllama as LangChainChatOllama
 from langchain_openai import ChatOpenAI
 
 from app.config import Settings
+from app.services.ollama_browser_llm import EfficientBrowserUseChatOllama
 
 ProviderName = Literal["openai", "anthropic", "google", "ollama", "heuristic"]
 RoutingTier = Literal["simple", "standard", "complex"]
@@ -124,6 +124,23 @@ def grading_model_name(settings: Settings, routing_tier: RoutingTier) -> str:
     return model_name
 
 
+def _normalize_reasoning_mode(value: str) -> bool | str:
+    normalized = value.strip().lower()
+    if normalized in {"", "0", "false", "none", "off"}:
+        return False
+    if normalized in {"1", "true", "on"}:
+        return True
+    return normalized
+
+
+def grading_reasoning_mode(settings: Settings, routing_tier: RoutingTier) -> bool | str:
+    if routing_tier == "simple":
+        return _normalize_reasoning_mode(settings.ollama_simple_reasoning_mode)
+    if routing_tier == "standard":
+        return _normalize_reasoning_mode(settings.ollama_standard_reasoning_mode)
+    return _normalize_reasoning_mode(settings.ollama_complex_reasoning_mode)
+
+
 def should_use_heuristic_grading(settings: Settings) -> bool:
     return grading_provider(settings) == "heuristic"
 
@@ -155,7 +172,10 @@ def build_grading_chat_model(settings: Settings, routing_tier: RoutingTier) -> B
             model=model_name,
             base_url=require_ollama_host(settings, "grading"),
             temperature=0,
-            num_predict=4096,
+            num_ctx=settings.ollama_grading_num_ctx,
+            num_predict=settings.ollama_grading_num_predict,
+            keep_alive=settings.ollama_keep_alive,
+            reasoning=grading_reasoning_mode(settings, routing_tier),
             format="json",
         )
 
@@ -188,11 +208,17 @@ def build_browser_use_llm(settings: Settings):
         )
 
     if provider == "ollama":
-        return BrowserUseChatOllama(
+        return EfficientBrowserUseChatOllama(
             model=model_name,
             host=require_ollama_host(settings, "browser automation"),
             timeout=settings.ollama_timeout_seconds,
-            ollama_options={"temperature": 0},
+            keep_alive=settings.ollama_keep_alive,
+            think="low" if settings.browser_agent_use_thinking else False,
+            ollama_options={
+                "temperature": 0,
+                "num_ctx": settings.ollama_browser_num_ctx,
+                "num_predict": settings.ollama_browser_num_predict,
+            },
         )
 
     model_name = resolve_google_model_name(model_name, settings)

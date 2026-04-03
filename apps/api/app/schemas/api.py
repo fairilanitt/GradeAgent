@@ -220,8 +220,12 @@ class RuntimeOverview(BaseModel):
     model_router_simple_model: str
     model_router_standard_model: str
     model_router_complex_model: str
+    ollama_simple_reasoning_mode: str | bool
+    ollama_standard_reasoning_mode: str | bool
+    ollama_complex_reasoning_mode: str | bool
     browser_agent_provider: str
     browser_agent_model: str
+    browser_agent_use_thinking: bool
     ollama_host: str | None = None
     heuristic_fallback_enabled: bool
     temporal_enabled: bool

@@ -87,8 +87,23 @@ class BrowserNavigationService:
         provider = normalize_provider(self.settings.browser_agent_provider)
         if provider == "ollama":
             model_name = self._resolved_browser_agent_model().lower()
-            return any(marker in model_name for marker in ("vl", "vision", "gemma3", "llava"))
+            return any(marker in model_name for marker in ("vl", "vision", "gemma3", "llava", "qwen3.5"))
         return True
+
+    def _agent_include_attributes(self) -> list[str]:
+        return ["aria-label", "placeholder"]
+
+    def _agent_kwargs(self) -> dict:
+        return {
+            "use_vision": self._browser_model_supports_vision(),
+            "include_attributes": self._agent_include_attributes(),
+            "max_actions_per_step": self.settings.browser_agent_max_actions_per_step,
+            "use_thinking": self.settings.browser_agent_use_thinking,
+            "flash_mode": self.settings.browser_agent_flash_mode,
+            "max_history_items": self.settings.browser_agent_max_history_items,
+            "vision_detail_level": self.settings.browser_agent_vision_detail_level,
+            "llm_timeout": self.settings.browser_agent_llm_timeout_seconds,
+        }
 
     def _bootstrap_profile_from_system_chrome(self, target_root: Path) -> None:
         source_root_str = get_chrome_profile_path(None)
@@ -340,42 +355,34 @@ class BrowserNavigationService:
             else "Do not trigger any final publish flow. Only move as needed to continue grading."
         )
         return f"""
-You are already inside the exam grading website on the main exam screen.
+You are already on the correct exam grading page.
 
 Teacher grading instructions:
 {payload.instructions}
 
-Website workflow you must follow:
-- The student list is shown as rows in the lower results table.
-- The exercise boxes are to the right of each student name.
-- The same exercise stays in one vertical column across all students.
-- Grade vertically: finish one exercise column for all students before moving to the next exercise column.
-- A dark blue exercise box means that answer is already graded. Skip it.
-- Click an exercise box to open the student answer view.
-- The student's answer is shown under "Oppilaan vastaus".
-- Use "Mallivastaus" and the teacher instructions above to decide points.
-- If the exercise has one overall score, type it in the field under "Pistemäärä".
-- Use the green rounded arrow buttons to move down the student list for the same exercise.
-- After finishing the full vertical student column for that exercise, press "Poistu oppilaan vastauksista" to go back to the main exam screen.
-- Then choose the next exercise column and repeat.
+Workflow:
+- Grade one vertical exercise column at a time.
+- Skip dark blue exercise boxes.
+- Open a box, read "Oppilaan vastaus", compare against "Mallivastaus" and the teacher rules.
+- If there is one total score, type it under "Pistemäärä".
+- Use the green rounded arrows to move to the next student in the same exercise.
+- After the whole column is done, press "Poistu oppilaan vastauksista", then start the next column.
 
-Special rules for multi-field exercises:
+Multi-field exercises:
 - Some exercises have multiple answer fields.
-- Some answers may already be marked correct automatically by the website in green overlays. Do not overwrite those.
+- Green auto-correct overlays should be left unchanged.
 - When there are several sub-answers, enter points under "Pisteytys".
-- The maximum points for each sub-answer appear as faded gray text inside the scoring field. Never exceed that max.
-- If needed, click the purple rounded icon near the student's answer field to reveal the correct answer for that sub-answer.
+- Never exceed the faded gray max shown in each scoring field.
+- If needed, use the purple rounded icon to reveal the correct answer for a sub-answer.
 - Score each sub-answer separately.
 
-Execution rules:
+Rules:
 - Work from the current page state. Do not start from another URL.
-- Stay on the same exam and same grading flow.
-- Never use the browser back button or browser history navigation. Use only the website's own buttons such as "Poistu oppilaan vastauksista" and the green student arrows.
-- Skip already graded dark blue boxes.
-- Use screenshots and DOM text together.
+- Stay inside the same exam.
+- Never use browser back/history. Use only website controls.
 - Use only numeric values in score inputs.
-- Be conservative if uncertain.
-- Stop when there are no more obvious ungraded boxes in the current exercise flow, or when you cannot continue safely.
+- Be conservative if unsure.
+- Stop when there are no obvious ungraded boxes or when it is unsafe to continue.
 - {action_instruction}
 - {submit_instruction}
 
@@ -417,11 +424,8 @@ Return a structured summary when finished.
             ),
             llm=llm,
             browser_session=browser_session,
-            use_vision=self._browser_model_supports_vision(),
-            include_attributes=["aria-label", "placeholder", "title", "name"],
             directly_open_url=True,
-            max_actions_per_step=4,
-            vision_detail_level="high",
+            **self._agent_kwargs(),
         )
 
         try:
@@ -542,11 +546,8 @@ Return a structured summary when finished.
             llm=llm,
             browser_session=browser_session,
             output_model_schema=QueueGradingAgentOutput,
-            use_vision=self._browser_model_supports_vision(),
-            include_attributes=["aria-label", "placeholder", "title", "name"],
             directly_open_url=True,
-            max_actions_per_step=4,
-            vision_detail_level="high",
+            **self._agent_kwargs(),
         )
 
         try:
@@ -684,11 +685,8 @@ Return a structured summary when finished.
                 llm=llm,
                 browser_session=browser_session,
                 output_model_schema=ExamSessionGradingAgentOutput,
-                use_vision=self._browser_model_supports_vision(),
-                include_attributes=["aria-label", "placeholder", "title", "name"],
                 directly_open_url=False,
-                max_actions_per_step=4,
-                vision_detail_level="high",
+                **self._agent_kwargs(),
             )
 
             history = await agent.run(max_steps=payload.max_steps)

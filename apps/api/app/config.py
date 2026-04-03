@@ -18,15 +18,15 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MODEL_ROUTER_PROVIDER", "FAST_LANE_PROVIDER"),
     )
     model_router_simple_model: str = Field(
-        default="qwen3:4b",
+        default="qwen3.5:4b",
         validation_alias=AliasChoices("MODEL_ROUTER_SIMPLE_MODEL", "FAST_LANE_MODEL"),
     )
     model_router_standard_model: str = Field(
-        default="qwen3:8b",
+        default="qwen3.5:9b",
         validation_alias=AliasChoices("MODEL_ROUTER_STANDARD_MODEL"),
     )
     model_router_complex_model: str = Field(
-        default="qwen3:8b",
+        default="qwen3.5:9b",
         validation_alias=AliasChoices("MODEL_ROUTER_COMPLEX_MODEL", "DEEP_LANE_MODEL"),
     )
     browser_agent_provider: str = Field(
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("BROWSER_AGENT_PROVIDER", "BROWSER_USE_PROVIDER"),
     )
     browser_agent_model: str = Field(
-        default="qwen3-vl:4b",
+        default="qwen3.5:9b",
         validation_alias=AliasChoices("BROWSER_AGENT_MODEL", "BROWSER_USE_MODEL"),
     )
     ollama_host: str = Field(
@@ -44,6 +44,62 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: int = Field(
         default=120,
         validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"),
+    )
+    ollama_keep_alive: str = Field(
+        default="15m",
+        validation_alias=AliasChoices("OLLAMA_KEEP_ALIVE"),
+    )
+    ollama_grading_num_ctx: int = Field(
+        default=6144,
+        validation_alias=AliasChoices("OLLAMA_GRADING_NUM_CTX"),
+    )
+    ollama_grading_num_predict: int = Field(
+        default=512,
+        validation_alias=AliasChoices("OLLAMA_GRADING_NUM_PREDICT"),
+    )
+    ollama_browser_num_ctx: int = Field(
+        default=8192,
+        validation_alias=AliasChoices("OLLAMA_BROWSER_NUM_CTX"),
+    )
+    ollama_browser_num_predict: int = Field(
+        default=384,
+        validation_alias=AliasChoices("OLLAMA_BROWSER_NUM_PREDICT"),
+    )
+    ollama_simple_reasoning_mode: str = Field(
+        default="off",
+        validation_alias=AliasChoices("OLLAMA_SIMPLE_REASONING_MODE"),
+    )
+    ollama_standard_reasoning_mode: str = Field(
+        default="off",
+        validation_alias=AliasChoices("OLLAMA_STANDARD_REASONING_MODE"),
+    )
+    ollama_complex_reasoning_mode: str = Field(
+        default="high",
+        validation_alias=AliasChoices("OLLAMA_COMPLEX_REASONING_MODE"),
+    )
+    browser_agent_flash_mode: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("BROWSER_AGENT_FLASH_MODE"),
+    )
+    browser_agent_use_thinking: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("BROWSER_AGENT_USE_THINKING"),
+    )
+    browser_agent_max_actions_per_step: int = Field(
+        default=2,
+        validation_alias=AliasChoices("BROWSER_AGENT_MAX_ACTIONS_PER_STEP"),
+    )
+    browser_agent_max_history_items: int = Field(
+        default=4,
+        validation_alias=AliasChoices("BROWSER_AGENT_MAX_HISTORY_ITEMS"),
+    )
+    browser_agent_vision_detail_level: str = Field(
+        default="low",
+        validation_alias=AliasChoices("BROWSER_AGENT_VISION_DETAIL_LEVEL"),
+    )
+    browser_agent_llm_timeout_seconds: int = Field(
+        default=90,
+        validation_alias=AliasChoices("BROWSER_AGENT_LLM_TIMEOUT_SECONDS"),
     )
     google_api_free_tier_only: bool = Field(
         default=True,

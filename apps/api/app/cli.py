@@ -10,7 +10,7 @@ from uuid import uuid4
 from app.config import get_settings
 from app.schemas.api import ExamSessionGradingTaskCreate, ExamSessionGradingTaskResult
 from app.services.browser_navigation import BrowserNavigationService
-from app.services.llm_provider import grading_model_name, normalize_provider, resolve_google_model_name
+from app.services.llm_provider import grading_model_name, grading_reasoning_mode, normalize_provider, resolve_google_model_name
 from browser_use.skill_cli.utils import find_chrome_executable
 
 
@@ -73,9 +73,11 @@ class GradeAgentShell(cmd.Cmd):
             print(f"\nNo additional help for: {arg}")
 
     def do_status(self, _: str) -> None:
+        standard_model_label = self.settings.model_router_standard_model
         complex_model_label = self.settings.model_router_complex_model
         browser_model_label = self.settings.browser_agent_model
         if normalize_provider(self.settings.model_router_provider) == "google":
+            standard_model_label = grading_model_name(self.settings, "standard")
             complex_model_label = grading_model_name(self.settings, "complex")
         if normalize_provider(self.settings.browser_agent_provider) == "google":
             browser_model_label = resolve_google_model_name(self.settings.browser_agent_model, self.settings)
@@ -92,8 +94,16 @@ class GradeAgentShell(cmd.Cmd):
         print("---------------------")
         print(f"Router provider: {self.settings.model_router_provider}")
         print(f"Simple model:    {self.settings.model_router_simple_model}")
+        print(f"Standard model:  {standard_model_label}")
         print(f"Complex model:   {complex_model_label}")
+        print(
+            "Grading think:   "
+            f"simple={grading_reasoning_mode(self.settings, 'simple')} "
+            f"standard={grading_reasoning_mode(self.settings, 'standard')} "
+            f"complex={grading_reasoning_mode(self.settings, 'complex')}"
+        )
         print(f"Browser model:   {browser_model_label}")
+        print(f"Browser think:   {self.settings.browser_agent_use_thinking}")
         print(f"Ollama host:     {self.settings.ollama_host}")
         if normalize_provider(self.settings.model_router_provider) == "google" or normalize_provider(
             self.settings.browser_agent_provider

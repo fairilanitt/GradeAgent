@@ -5,6 +5,7 @@ from app.schemas.api import CriterionDefinition
 from app.services.llm_provider import (
     ProviderConfigurationError,
     build_browser_use_llm,
+    grading_reasoning_mode,
     normalize_provider,
     require_ollama_host,
     resolve_google_model_name,
@@ -70,7 +71,7 @@ def test_routing_uses_lite_model_for_simple_text() -> None:
     settings = Settings().model_copy(update={"model_router_provider": "ollama"})
     decision = resolve_routing_decision(settings, payload)
     assert decision.routing_tier == "simple"
-    assert decision.model_name == "qwen3:4b"
+    assert decision.model_name == "qwen3.5:4b"
 
 
 def test_routing_uses_qwen8b_for_complex_local_text() -> None:
@@ -114,7 +115,15 @@ def test_routing_uses_qwen8b_for_complex_local_text() -> None:
     settings = Settings().model_copy(update={"model_router_provider": "ollama"})
     decision = resolve_routing_decision(settings, payload)
     assert decision.routing_tier == "complex"
-    assert decision.model_name == "qwen3:8b"
+    assert decision.model_name == "qwen3.5:9b"
+
+
+def test_ollama_reasoning_modes_use_fast_simple_and_deeper_complex() -> None:
+    settings = Settings().model_copy(update={"model_router_provider": "ollama"})
+
+    assert grading_reasoning_mode(settings, "simple") is False
+    assert grading_reasoning_mode(settings, "standard") is False
+    assert grading_reasoning_mode(settings, "complex") == "high"
 
 
 def test_google_free_tier_remaps_pro_model_to_flash_preview() -> None:
