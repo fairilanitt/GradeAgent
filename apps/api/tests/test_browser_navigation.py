@@ -53,7 +53,8 @@ class StubBrowserSessionWithTabs:
         self.switched_target_id: str | None = None
         self.tabs = [
             SimpleNamespace(target_id="blank-tab", url="about:blank", title=""),
-            SimpleNamespace(target_id="exam-tab", url="https://www.sanomapro.fi/koe/123", title="Exam"),
+            SimpleNamespace(target_id="sanoma-tab", url="https://www.sanomapro.fi/auth/login/", title="SanomaPro"),
+            SimpleNamespace(target_id="exam-tab", url="https://teas.exam-portal.example/session/123", title="TEAS"),
         ]
 
     def get_focused_target(self):
@@ -77,6 +78,16 @@ class StubBrowserSessionWithTabs:
         raise RuntimeError("Unknown target id")
 
 
+class StubBrowserSessionWithTabsNoCDP(StubBrowserSessionWithTabs):
+    def __init__(self) -> None:
+        super().__init__()
+        self._cdp_client_root = None
+        self.agent_focus_target_id: str | None = None
+
+    async def on_SwitchTabEvent(self, event) -> str:
+        raise AssertionError("Root CDP client not initialized")
+
+
 def test_get_current_page_url_uses_browser_session_api() -> None:
     service = BrowserNavigationService(Settings())
     current_url = asyncio.run(service.get_current_page_url(StubBrowserSession()))
@@ -91,8 +102,19 @@ def test_get_current_page_url_switches_to_best_existing_non_blank_tab() -> None:
     session = StubBrowserSessionWithTabs()
     current_url = asyncio.run(service.get_current_page_url(session))
 
-    assert current_url == "https://www.sanomapro.fi/koe/123"
+    assert current_url == "https://teas.exam-portal.example/session/123"
     assert session.switched_target_id == "exam-tab"
+
+
+def test_get_current_page_url_falls_back_to_direct_focus_when_cdp_root_is_not_ready() -> None:
+    settings = Settings().model_copy(update={"browser_start_url": "https://www.sanomapro.fi/auth/login/"})
+    service = BrowserNavigationService(settings)
+
+    session = StubBrowserSessionWithTabsNoCDP()
+    current_url = asyncio.run(service.get_current_page_url(session))
+
+    assert current_url == "https://teas.exam-portal.example/session/123"
+    assert session.agent_focus_target_id == "exam-tab"
 
 
 def test_launch_interactive_browser_opens_default_login_page(monkeypatch) -> None:

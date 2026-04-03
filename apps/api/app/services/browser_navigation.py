@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import shutil
 import tempfile
 import time
@@ -117,7 +118,64 @@ class BrowserNavigationService:
         } and not normalized.startswith("chrome://")
 
     async def _switch_to_target(self, browser_session: BrowserSession, target_id: str) -> None:
-        await browser_session.on_SwitchTabEvent(SwitchTabEvent(target_id=target_id))
+        for _ in range(10):
+            if getattr(browser_session, "_cdp_client_root", None) is not None:
+                break
+            await asyncio.sleep(0.1)
+
+        try:
+            await browser_session.on_SwitchTabEvent(SwitchTabEvent(target_id=target_id))
+        except (AssertionError, RuntimeError) as exc:
+            if "cdp client" not in str(exc).lower():
+                raise
+
+            # Fall back to updating agent focus directly when browser-use has not yet
+            # finished wiring its root CDP client, but cached target data is available.
+            browser_session.agent_focus_target_id = target_id
+
+    def _tab_selection_score(self, tab, index: int) -> tuple[int, int]:
+        url = getattr(tab, "url", "") or ""
+        title = getattr(tab, "title", "") or ""
+        normalized_url = url.lower()
+        normalized_title = title.lower()
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+
+        score = 0
+
+        # Prefer the actual exam portal over the original login/dashboard page.
+        if "teas" in normalized_title or "teas" in normalized_url or "teas" in host:
+            score += 100
+
+        exam_markers = (
+            "exam",
+            "koe",
+            "piste",
+            "pisteytys",
+            "oppilaan vastaus",
+            "arvio",
+            "suoritus",
+            "mallivastaus",
+        )
+        if any(marker in normalized_title or marker in normalized_url for marker in exam_markers):
+            score += 40
+
+        login_markers = (
+            "/auth/login",
+            "/login",
+            "kirjaudu",
+            "sign in",
+            "log in",
+            "kirjaut",
+        )
+        if any(marker in normalized_title or marker in normalized_url for marker in login_markers):
+            score -= 80
+
+        if parsed.path and parsed.path not in {"/", ""}:
+            score += 10
+
+        # Prefer later tabs as a tiebreaker since the exam portal is usually opened after login.
+        return score, index
 
     async def _focus_best_available_page(self, browser_session: BrowserSession) -> str | None:
         focused_target = browser_session.get_focused_target()
@@ -130,16 +188,11 @@ class BrowserNavigationService:
         if not candidates:
             return None
 
-        preferred_host = urlparse(self.settings.browser_start_url).netloc.lower() if self.settings.browser_start_url else ""
-        selected_tab = candidates[-1]
-        if preferred_host:
-            for tab in reversed(candidates):
-                tab_host = urlparse(tab.url).netloc.lower()
-                if tab_host == preferred_host or tab_host.endswith(f".{preferred_host}") or preferred_host.endswith(
-                    f".{tab_host}"
-                ):
-                    selected_tab = tab
-                    break
+        indexed_candidates = list(enumerate(candidates))
+        selected_tab = max(
+            indexed_candidates,
+            key=lambda item: self._tab_selection_score(item[1], item[0]),
+        )[1]
 
         await self._switch_to_target(browser_session, selected_tab.target_id)
         return selected_tab.url
