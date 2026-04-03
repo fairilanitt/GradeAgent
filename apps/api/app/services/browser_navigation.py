@@ -146,6 +146,10 @@ class BrowserNavigationService:
         # Prefer the actual exam portal over the original login/dashboard page.
         if "teas" in normalized_title or "teas" in normalized_url or "teas" in host:
             score += 100
+        if host == "arvi.sanomapro.fi" or host.endswith(".arvi.sanomapro.fi"):
+            score += 120
+        elif "arvi" in host or "arvi" in normalized_url or "arvi" in normalized_title:
+            score += 80
 
         exam_markers = (
             "exam",
@@ -170,6 +174,8 @@ class BrowserNavigationService:
         )
         if any(marker in normalized_title or marker in normalized_url for marker in login_markers):
             score -= 80
+        if host == "www.sanomapro.fi" and any(marker in normalized_url for marker in ("/auth/login", "/kirjaut")):
+            score -= 40
 
         if parsed.path and parsed.path not in {"/", ""}:
             score += 10

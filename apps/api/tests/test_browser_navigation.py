@@ -54,7 +54,7 @@ class StubBrowserSessionWithTabs:
         self.tabs = [
             SimpleNamespace(target_id="blank-tab", url="about:blank", title=""),
             SimpleNamespace(target_id="sanoma-tab", url="https://www.sanomapro.fi/auth/login/", title="SanomaPro"),
-            SimpleNamespace(target_id="exam-tab", url="https://teas.exam-portal.example/session/123", title="TEAS"),
+            SimpleNamespace(target_id="exam-tab", url="https://arvi.sanomapro.fi/exam/session/123", title="TEAS"),
         ]
 
     def get_focused_target(self):
@@ -102,7 +102,7 @@ def test_get_current_page_url_switches_to_best_existing_non_blank_tab() -> None:
     session = StubBrowserSessionWithTabs()
     current_url = asyncio.run(service.get_current_page_url(session))
 
-    assert current_url == "https://teas.exam-portal.example/session/123"
+    assert current_url == "https://arvi.sanomapro.fi/exam/session/123"
     assert session.switched_target_id == "exam-tab"
 
 
@@ -113,7 +113,7 @@ def test_get_current_page_url_falls_back_to_direct_focus_when_cdp_root_is_not_re
     session = StubBrowserSessionWithTabsNoCDP()
     current_url = asyncio.run(service.get_current_page_url(session))
 
-    assert current_url == "https://teas.exam-portal.example/session/123"
+    assert current_url == "https://arvi.sanomapro.fi/exam/session/123"
     assert session.agent_focus_target_id == "exam-tab"
 
 
