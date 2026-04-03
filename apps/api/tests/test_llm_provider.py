@@ -126,6 +126,14 @@ def test_ollama_reasoning_modes_use_fast_simple_and_deeper_complex() -> None:
     assert grading_reasoning_mode(settings, "complex") == "high"
 
 
+def test_settings_clamp_invalid_browser_history_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BROWSER_AGENT_MAX_HISTORY_ITEMS", "4")
+
+    settings = Settings()
+
+    assert settings.browser_agent_max_history_items == 6
+
+
 def test_google_free_tier_remaps_pro_model_to_flash_preview() -> None:
     settings = Settings().model_copy(
         update={

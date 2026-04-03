@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -89,8 +89,8 @@ class Settings(BaseSettings):
         default=2,
         validation_alias=AliasChoices("BROWSER_AGENT_MAX_ACTIONS_PER_STEP"),
     )
-    browser_agent_max_history_items: int = Field(
-        default=4,
+    browser_agent_max_history_items: int | None = Field(
+        default=6,
         validation_alias=AliasChoices("BROWSER_AGENT_MAX_HISTORY_ITEMS"),
     )
     browser_agent_vision_detail_level: str = Field(
@@ -152,6 +152,85 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @field_validator("ollama_timeout_seconds", "browser_agent_llm_timeout_seconds", mode="before")
+    @classmethod
+    def _clamp_timeout_seconds(cls, value: int | str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 90
+        return max(parsed, 30)
+
+    @field_validator("ollama_grading_num_ctx", mode="before")
+    @classmethod
+    def _clamp_grading_context(cls, value: int | str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 6144
+        return max(parsed, 2048)
+
+    @field_validator("ollama_browser_num_ctx", mode="before")
+    @classmethod
+    def _clamp_browser_context(cls, value: int | str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 8192
+        return max(parsed, 4096)
+
+    @field_validator("browser_agent_max_actions_per_step", mode="before")
+    @classmethod
+    def _clamp_browser_actions(cls, value: int | str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 2
+        return min(max(parsed, 1), 5)
+
+    @field_validator("browser_agent_max_history_items", mode="before")
+    @classmethod
+    def _clamp_browser_history(cls, value: int | str | None) -> int | None:
+        if value is None:
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 6
+        if parsed <= 0:
+            return None
+        if parsed <= 5:
+            return 6
+        return parsed
+
+    @field_validator("browser_cleanup_stale_after_seconds", mode="before")
+    @classmethod
+    def _clamp_cleanup_age(cls, value: int | str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 3600
+        return max(parsed, 0)
+
+    @field_validator("browser_max_saved_screenshots", mode="before")
+    @classmethod
+    def _clamp_screenshot_limit(cls, value: int | str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 3
+        return max(parsed, 0)
+
+    @field_validator("browser_agent_vision_detail_level", mode="before")
+    @classmethod
+    def _normalize_vision_detail_level(cls, value: str | None) -> str:
+        if not value:
+            return "low"
+        normalized = str(value).strip().lower()
+        if normalized not in {"auto", "low", "high"}:
+            return "low"
+        return normalized
 
 
 @lru_cache(maxsize=1)

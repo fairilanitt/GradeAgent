@@ -27,6 +27,7 @@ os.environ["BROWSER_CHROME_PROFILE_DIRECTORY"] = "Default"
 os.environ["BROWSER_PERSISTENT_PROFILE_DIR"] = "artifacts/browser/browser-use-user-data-dir-gradeagent-test"
 os.environ["BROWSER_CLEANUP_STALE_AFTER_SECONDS"] = "3600"
 os.environ["BROWSER_MAX_SAVED_SCREENSHOTS"] = "3"
+os.environ["BROWSER_AGENT_MAX_HISTORY_ITEMS"] = "6"
 
 from app.db import get_session
 from app.main import app
