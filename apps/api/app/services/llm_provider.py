@@ -186,6 +186,16 @@ def grading_model_name(settings: Settings, routing_tier: RoutingTier) -> str:
     return model_name
 
 
+def resolve_provider_model_name(provider: str, model_name: str, settings: Settings) -> tuple[ProviderName, str]:
+    normalized_provider = normalize_provider(provider)
+    resolved_model_name = model_name.strip()
+
+    if normalized_provider == "google":
+        resolved_model_name = resolve_google_model_name(resolved_model_name, settings)
+
+    return normalized_provider, resolved_model_name
+
+
 def _normalize_reasoning_mode(value: str) -> bool | str:
     normalized = value.strip().lower()
     if normalized in {"", "0", "false", "none", "off"}:
@@ -211,27 +221,44 @@ def build_grading_chat_model(settings: Settings, routing_tier: RoutingTier) -> B
     provider = grading_provider(settings)
     model_name = grading_model_name(settings, routing_tier)
 
-    if provider == "heuristic":
+    return build_explicit_grading_chat_model(
+        settings,
+        provider=provider,
+        model_name=model_name,
+        routing_tier=routing_tier,
+    )
+
+
+def build_explicit_grading_chat_model(
+    settings: Settings,
+    *,
+    provider: str,
+    model_name: str,
+    routing_tier: RoutingTier = "standard",
+) -> BaseChatModel:
+    provider_name, resolved_model_name = resolve_provider_model_name(provider, model_name, settings)
+
+    if provider_name == "heuristic":
         raise ProviderConfigurationError("Heuristic is not a managed chat provider. Use the heuristic router instead.")
 
-    if provider == "openai":
+    if provider_name == "openai":
         return ChatOpenAI(
-            model=model_name,
-            api_key=require_provider_key(provider, settings, "grading"),
+            model=resolved_model_name,
+            api_key=require_provider_key(provider_name, settings, "grading"),
             temperature=0,
         )
 
-    if provider == "anthropic":
+    if provider_name == "anthropic":
         return ChatAnthropic(
-            model=model_name,
-            api_key=require_provider_key(provider, settings, "grading"),
+            model=resolved_model_name,
+            api_key=require_provider_key(provider_name, settings, "grading"),
             temperature=0,
             max_tokens=4096,
         )
 
-    if provider == "ollama":
+    if provider_name == "ollama":
         return LangChainChatOllama(
-            model=model_name,
+            model=resolved_model_name,
             base_url=require_ollama_host(settings, "grading"),
             temperature=0,
             num_ctx=settings.ollama_grading_num_ctx,
@@ -242,8 +269,8 @@ def build_grading_chat_model(settings: Settings, routing_tier: RoutingTier) -> B
         )
 
     return ChatGoogleGenerativeAI(
-        model=model_name,
-        google_api_key=require_provider_key(provider, settings, "grading"),
+        model=resolved_model_name,
+        google_api_key=require_provider_key(provider_name, settings, "grading"),
         temperature=0,
     )
 

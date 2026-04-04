@@ -5,6 +5,7 @@ import asyncio
 import io
 import json
 import platform
+import re
 import shutil
 import tempfile
 import time
@@ -38,7 +39,7 @@ from app.schemas.api import (
 from app.services.llm_provider import (
     ProviderConfigurationError,
     browser_model_supports_vision,
-    build_grading_chat_model,
+    build_explicit_grading_chat_model,
     build_browser_use_llm,
     extract_json_object,
     flatten_llm_content,
@@ -1308,6 +1309,358 @@ Be conservative. If uncertain, do not choose exam_grading.
             return str(int(rounded))
         return f"{rounded:.2f}".rstrip("0").rstrip(".")
 
+    async def _set_browser_status_overlay(
+        self,
+        page,
+        *,
+        mode: Literal["running", "completed", "failed", "needs_review"] = "running",
+        headline: str,
+        detail: str,
+        meta: dict[str, str | int | float | None] | None = None,
+        record_event: bool = True,
+    ) -> None:
+        payload = {
+            "mode": mode,
+            "badge": {
+                "running": "Live",
+                "completed": "Completed",
+                "failed": "Failed",
+                "needs_review": "Needs Review",
+            }.get(mode, "Live"),
+            "headline": headline.strip(),
+            "detail": detail.strip(),
+            "meta": [
+                [str(label), str(value)]
+                for label, value in (meta or {}).items()
+                if value not in {None, ""}
+            ],
+            "recordEvent": record_event,
+            "timestamp": time.strftime("%H:%M:%S"),
+        }
+
+        try:
+            await page.evaluate(
+                f"""
+                () => {{
+                  const payload = {json.dumps(payload, ensure_ascii=False)};
+                  const overlayId = '__gradeagent_status_overlay__';
+                  const styleId = '__gradeagent_status_overlay_style__';
+                  const historyKey = '__gradeagent_status_overlay_history__';
+
+                  if (!document.getElementById(styleId)) {{
+                    const style = document.createElement('style');
+                    style.id = styleId;
+                    style.textContent = `
+                      #${{overlayId}} {{
+                        position: fixed;
+                        top: 16px;
+                        right: 16px;
+                        z-index: 2147483647;
+                        width: min(420px, calc(100vw - 32px));
+                        color: #f8fafc;
+                        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                        pointer-events: none;
+                      }}
+                      #${{overlayId}} .ga-card {{
+                        background:
+                          linear-gradient(160deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.94));
+                        border: 1px solid rgba(148, 163, 184, 0.28);
+                        border-radius: 18px;
+                        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.32);
+                        backdrop-filter: blur(10px);
+                        padding: 14px 15px 12px;
+                      }}
+                      #${{overlayId}}[data-mode="completed"] .ga-card {{
+                        background:
+                          linear-gradient(160deg, rgba(6, 95, 70, 0.94), rgba(15, 118, 110, 0.94));
+                      }}
+                      #${{overlayId}}[data-mode="failed"] .ga-card {{
+                        background:
+                          linear-gradient(160deg, rgba(127, 29, 29, 0.96), rgba(153, 27, 27, 0.94));
+                      }}
+                      #${{overlayId}}[data-mode="needs_review"] .ga-card {{
+                        background:
+                          linear-gradient(160deg, rgba(120, 53, 15, 0.96), rgba(146, 64, 14, 0.94));
+                      }}
+                      #${{overlayId}} .ga-topline {{
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        margin-bottom: 8px;
+                      }}
+                      #${{overlayId}} .ga-badge {{
+                        display: inline-flex;
+                        align-items: center;
+                        padding: 3px 9px;
+                        border-radius: 999px;
+                        font-size: 11px;
+                        font-weight: 700;
+                        letter-spacing: 0.04em;
+                        text-transform: uppercase;
+                        background: rgba(255, 255, 255, 0.16);
+                      }}
+                      #${{overlayId}} .ga-clock {{
+                        margin-left: auto;
+                        opacity: 0.78;
+                        font-size: 11px;
+                      }}
+                      #${{overlayId}} .ga-headline {{
+                        font-size: 18px;
+                        font-weight: 700;
+                        margin-bottom: 4px;
+                      }}
+                      #${{overlayId}} .ga-detail {{
+                        font-size: 13px;
+                        opacity: 0.94;
+                        white-space: pre-wrap;
+                      }}
+                      #${{overlayId}} .ga-meta {{
+                        display: grid;
+                        grid-template-columns: repeat(2, minmax(0, 1fr));
+                        gap: 8px;
+                        margin-top: 12px;
+                      }}
+                      #${{overlayId}} .ga-meta-item {{
+                        background: rgba(255, 255, 255, 0.08);
+                        border: 1px solid rgba(255, 255, 255, 0.08);
+                        border-radius: 12px;
+                        padding: 8px 9px;
+                      }}
+                      #${{overlayId}} .ga-meta-label {{
+                        display: block;
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: 0.05em;
+                        text-transform: uppercase;
+                        opacity: 0.7;
+                        margin-bottom: 2px;
+                      }}
+                      #${{overlayId}} .ga-meta-value {{
+                        display: block;
+                        font-size: 12px;
+                        font-weight: 600;
+                        word-break: break-word;
+                      }}
+                      #${{overlayId}} .ga-activity {{
+                        margin-top: 12px;
+                        display: grid;
+                        gap: 6px;
+                      }}
+                      #${{overlayId}} .ga-activity-title {{
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: 0.05em;
+                        text-transform: uppercase;
+                        opacity: 0.72;
+                      }}
+                      #${{overlayId}} .ga-activity-item {{
+                        display: grid;
+                        grid-template-columns: 52px 1fr;
+                        gap: 8px;
+                        font-size: 12px;
+                        opacity: 0.92;
+                      }}
+                      #${{overlayId}} .ga-activity-time {{
+                        opacity: 0.65;
+                      }}
+                    `;
+                    (document.head || document.documentElement).appendChild(style);
+                  }}
+
+                  let root = document.getElementById(overlayId);
+                  if (!root) {{
+                    root = document.createElement('section');
+                    root.id = overlayId;
+                    root.innerHTML = `
+                      <div class="ga-card">
+                        <div class="ga-topline">
+                          <span class="ga-badge"></span>
+                          <span class="ga-phase"></span>
+                          <span class="ga-clock"></span>
+                        </div>
+                        <div class="ga-headline"></div>
+                        <div class="ga-detail"></div>
+                        <div class="ga-meta"></div>
+                        <div class="ga-activity">
+                          <div class="ga-activity-title">Recent activity</div>
+                          <div class="ga-activity-list"></div>
+                        </div>
+                      </div>
+                    `;
+                    (document.body || document.documentElement).appendChild(root);
+                  }}
+
+                  const history = Array.isArray(window[historyKey]) ? window[historyKey] : [];
+                  if (payload.recordEvent) {{
+                    history.unshift({{
+                      timestamp: payload.timestamp,
+                      headline: payload.headline,
+                      detail: payload.detail,
+                    }});
+                    window[historyKey] = history.slice(0, 4);
+                  }}
+
+                  root.dataset.mode = payload.mode;
+                  root.querySelector('.ga-badge').textContent = payload.badge;
+                  root.querySelector('.ga-phase').textContent = payload.mode.replace('_', ' ');
+                  root.querySelector('.ga-clock').textContent = payload.timestamp;
+                  root.querySelector('.ga-headline').textContent = payload.headline;
+                  root.querySelector('.ga-detail').textContent = payload.detail;
+
+                  const metaRoot = root.querySelector('.ga-meta');
+                  metaRoot.replaceChildren();
+                  for (const [label, value] of payload.meta || []) {{
+                    const item = document.createElement('div');
+                    item.className = 'ga-meta-item';
+                    const labelEl = document.createElement('span');
+                    labelEl.className = 'ga-meta-label';
+                    labelEl.textContent = label;
+                    const valueEl = document.createElement('span');
+                    valueEl.className = 'ga-meta-value';
+                    valueEl.textContent = value;
+                    item.append(labelEl, valueEl);
+                    metaRoot.appendChild(item);
+                  }}
+
+                  const activityList = root.querySelector('.ga-activity-list');
+                  activityList.replaceChildren();
+                  for (const item of window[historyKey] || []) {{
+                    const row = document.createElement('div');
+                    row.className = 'ga-activity-item';
+                    const timeEl = document.createElement('span');
+                    timeEl.className = 'ga-activity-time';
+                    timeEl.textContent = item.timestamp;
+                    const textEl = document.createElement('span');
+                    textEl.textContent = `${{item.headline}}: ${{item.detail}}`;
+                    row.append(timeEl, textEl);
+                    activityList.appendChild(row);
+                  }}
+
+                  return true;
+                }}
+                """
+            )
+        except Exception:
+            return None
+
+    def _normalize_sanomapro_score_decision(
+        self,
+        decision: SanomaScoreDecision,
+        exercise_state: SanomaExerciseState,
+    ) -> SanomaScoreDecision:
+        bounded_scores: list[SanomaScoreDecisionField] = []
+        max_scores = {field.index: field.max_score for field in exercise_state.score_fields}
+        for field_decision in decision.scores:
+            max_score = max_scores.get(field_decision.index)
+            if max_score is None:
+                continue
+            bounded_scores.append(
+                SanomaScoreDecisionField(
+                    index=field_decision.index,
+                    score=min(max(round(field_decision.score, 2), 0), max_score),
+                    rationale=field_decision.rationale,
+                )
+            )
+
+        decision.scores = sorted(bounded_scores, key=lambda item: item.index)
+        if not decision.scores and not decision.should_skip:
+            decision.should_skip = True
+            decision.skip_reason = "missing_score_output"
+        return decision
+
+    async def _build_sanomapro_heuristic_score_decision(
+        self,
+        score_request: GradeRequest,
+        exercise_state: SanomaExerciseState,
+        *,
+        summary_prefix: str | None = None,
+    ) -> SanomaScoreDecision:
+        heuristic_decision = resolve_routing_decision(
+            self.settings,
+            score_request,
+            provider_override="heuristic",
+        )
+        heuristic_result = await HeuristicModelRouter(self.settings).grade(score_request, heuristic_decision)
+        decision = SanomaScoreDecision(
+            summary=(
+                f"{summary_prefix} {heuristic_result.feedback}".strip()
+                if summary_prefix
+                else heuristic_result.feedback
+            ),
+            confidence=heuristic_result.confidence,
+            scores=[
+                SanomaScoreDecisionField(
+                    index=index,
+                    score=item.score,
+                    rationale=item.rationale,
+                )
+                for index, item in enumerate(heuristic_result.criterion_scores[: len(exercise_state.score_fields)])
+            ],
+        )
+        return self._normalize_sanomapro_score_decision(decision, exercise_state)
+
+    def _parse_sanomapro_score_decision_text(
+        self,
+        text: str,
+        parser: PydanticOutputParser,
+        exercise_state: SanomaExerciseState,
+    ) -> SanomaScoreDecision | None:
+        cleaned_text = text.strip()
+        if not cleaned_text:
+            return None
+
+        try:
+            decision = parser.parse(cleaned_text)
+        except Exception:
+            try:
+                decision = SanomaScoreDecision.model_validate_json(extract_json_object(cleaned_text))
+            except Exception:
+                return None
+        return self._normalize_sanomapro_score_decision(decision, exercise_state)
+
+    async def _repair_sanomapro_score_decision(
+        self,
+        *,
+        model,
+        parser: PydanticOutputParser,
+        raw_text: str,
+        exercise_state: SanomaExerciseState,
+    ) -> SanomaScoreDecision | None:
+        if not raw_text.strip():
+            return None
+
+        try:
+            response = await model.ainvoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "Convert the previous grading draft into valid JSON for the requested schema. "
+                            "Return JSON only. Do not add commentary."
+                        )
+                    ),
+                    HumanMessage(
+                        content=f"""
+Visible score fields:
+{chr(10).join(
+    f"- index {field.index}: max {field.max_score}, label '{field.label or field.container_text}'"
+    for field in exercise_state.score_fields
+)}
+
+Previous non-JSON draft:
+{raw_text}
+
+JSON schema instructions:
+{parser.get_format_instructions()}
+""".strip()
+                    ),
+                ]
+            )
+        except Exception:
+            return None
+
+        repaired_text = flatten_llm_content(response.content)
+        return self._parse_sanomapro_score_decision_text(repaired_text, parser, exercise_state)
+
     async def _extract_sanomapro_overview_state(self, page) -> SanomaOverviewState:
         return await self._evaluate_page_json(
             page,
@@ -1473,20 +1826,13 @@ Be conservative. If uncertain, do not choose exam_grading.
             },
             exemplars=[],
         )
-        routing_decision = resolve_routing_decision(self.settings, score_request)
-        if routing_decision.provider == "heuristic":
-            heuristic_result = await HeuristicModelRouter(self.settings).grade(score_request, routing_decision)
-            return SanomaScoreDecision(
-                summary=heuristic_result.feedback,
-                confidence=heuristic_result.confidence,
-                scores=[
-                    SanomaScoreDecisionField(
-                        index=index,
-                        score=min(max(round(item.score, 2), 0), criteria[index].max_score),
-                        rationale=item.rationale,
-                    )
-                    for index, item in enumerate(heuristic_result.criterion_scores[: len(criteria)])
-                ],
+
+        sanomapro_provider = normalize_provider(self.settings.sanomapro_exercise_grading_provider)
+        sanomapro_model = self.settings.sanomapro_exercise_grading_model.strip() or "gemini-2.5-flash-lite"
+        if sanomapro_provider == "heuristic":
+            return await self._build_sanomapro_heuristic_score_decision(
+                score_request,
+                exercise_state,
             )
 
         parser = PydanticOutputParser(pydantic_object=SanomaScoreDecision)
@@ -1494,18 +1840,24 @@ Be conservative. If uncertain, do not choose exam_grading.
             f"- index {field.index}: max {field.max_score}, current value '{field.current_value}', label '{field.label or field.container_text}'"
             for field in exercise_state.score_fields
         )
-        model = build_grading_chat_model(self.settings, routing_decision.routing_tier)
-        response = await model.ainvoke(
-            [
-                SystemMessage(
-                    content=(
-                        "You are a deterministic Sanoma Pro exam grading engine. "
-                        "Read the visible exercise content and return bounded numeric scores for the visible score fields only. "
-                        "Never invent extra fields. Never exceed the provided max scores. Return JSON only."
-                    )
-                ),
-                HumanMessage(
-                    content=f"""
+        try:
+            model = build_explicit_grading_chat_model(
+                self.settings,
+                provider=sanomapro_provider,
+                model_name=sanomapro_model,
+                routing_tier="standard",
+            )
+            response = await model.ainvoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "You are a deterministic Sanoma Pro exam grading engine. "
+                            "Read the visible exercise content and return bounded numeric scores for the visible score fields only. "
+                            "Never invent extra fields. Never exceed the provided max scores. Return JSON only."
+                        )
+                    ),
+                    HumanMessage(
+                        content=f"""
 Teacher grading instructions:
 {payload.instructions}
 
@@ -1537,33 +1889,41 @@ Requirements:
 JSON schema instructions:
 {parser.get_format_instructions()}
 """.strip()
-                ),
-            ]
-        )
-        text = flatten_llm_content(response.content)
-        try:
-            decision = parser.parse(text)
-        except Exception:
-            decision = SanomaScoreDecision.model_validate_json(extract_json_object(text))
-
-        bounded_scores: list[SanomaScoreDecisionField] = []
-        max_scores = {field.index: field.max_score for field in exercise_state.score_fields}
-        for field_decision in decision.scores:
-            max_score = max_scores.get(field_decision.index)
-            if max_score is None:
-                continue
-            bounded_scores.append(
-                SanomaScoreDecisionField(
-                    index=field_decision.index,
-                    score=min(max(round(field_decision.score, 2), 0), max_score),
-                    rationale=field_decision.rationale,
-                )
+                    ),
+                ]
             )
-        decision.scores = bounded_scores
-        if not decision.scores and not decision.should_skip:
-            decision.should_skip = True
-            decision.skip_reason = "missing_score_output"
-        return decision
+            text = flatten_llm_content(response.content)
+        except Exception as exc:
+            return await self._build_sanomapro_heuristic_score_decision(
+                score_request,
+                exercise_state,
+                summary_prefix=(
+                    "Heuristic fallback applied after Sanoma exercise grading failed "
+                    f"with {sanomapro_provider}/{sanomapro_model}: {exc}."
+                ),
+            )
+
+        decision = self._parse_sanomapro_score_decision_text(text, parser, exercise_state)
+        if decision is not None:
+            return decision
+
+        repaired_decision = await self._repair_sanomapro_score_decision(
+            model=model,
+            parser=parser,
+            raw_text=text,
+            exercise_state=exercise_state,
+        )
+        if repaired_decision is not None:
+            return repaired_decision
+
+        return await self._build_sanomapro_heuristic_score_decision(
+            score_request,
+            exercise_state,
+            summary_prefix=(
+                "Heuristic fallback applied after "
+                f"{sanomapro_provider}/{sanomapro_model} returned a non-JSON grading draft."
+            ),
+        )
 
     async def _apply_sanomapro_score_decision(
         self,
@@ -1642,6 +2002,17 @@ JSON schema instructions:
             page_url = await self.get_current_page_url(browser_session) or current_url
             current_url = page_url
             if self._is_sanomapro_review_overview_url(page_url):
+                await self._set_browser_status_overlay(
+                    page,
+                    mode="running",
+                    headline="Scanning review overview",
+                    detail="Looking for the next ungraded exercise cell in the Sanoma review matrix.",
+                    meta={
+                        "Processed": processed_answers,
+                        "Skipped": skipped_answers,
+                        "Route": "Overview",
+                    },
+                )
                 overview_state = await self._extract_sanomapro_overview_state(page)
                 candidate = next(
                     (item for item in overview_state.pending_candidates if item.candidate_key not in skipped_candidates),
@@ -1661,7 +2032,29 @@ JSON schema instructions:
                         }
                     )
                     break
+                await self._set_browser_status_overlay(
+                    page,
+                    mode="running",
+                    headline="Selecting exercise",
+                    detail=f"Opening review cell {candidate.selector_index + 1} with visible score state '{candidate.score_text or '-'}'.",
+                    meta={
+                        "Processed": processed_answers,
+                        "Skipped": skipped_answers,
+                        "Pending cells": len(overview_state.pending_candidates),
+                        "Route": "Overview",
+                    },
+                )
                 if not await self._open_sanomapro_overview_candidate(page, page_url, candidate):
+                    await self._set_browser_status_overlay(
+                        page,
+                        mode="failed",
+                        headline="Opening exercise failed",
+                        detail="The selected review cell could not be opened from the overview grid.",
+                        meta={
+                            "Cell": candidate.selector_index + 1,
+                            "Route": "Overview",
+                        },
+                    )
                     return ExamSessionGradingTaskResult(
                         job_id=job_id,
                         status="failed",
@@ -1693,7 +2086,29 @@ JSON schema instructions:
                 summary = f"Stopped because the current Sanoma Pro page was not a supported review route: {page_url}"
                 break
 
+            await self._set_browser_status_overlay(
+                page,
+                mode="running",
+                headline="Preparing exercise",
+                detail="Checking that manual score inputs are visible before grading.",
+                meta={
+                    "Processed": processed_answers,
+                    "Skipped": skipped_answers,
+                    "Route": "Exercise",
+                },
+            )
             if not await self._ensure_sanomapro_score_fields_visible(page, page_url):
+                await self._set_browser_status_overlay(
+                    page,
+                    mode="failed",
+                    headline="Score fields unavailable",
+                    detail="The exercise page did not expose the manual score inputs needed for autonomy.",
+                    meta={
+                        "Processed": processed_answers,
+                        "Skipped": skipped_answers,
+                        "Route": "Exercise",
+                    },
+                )
                 return ExamSessionGradingTaskResult(
                     job_id=job_id,
                     status="failed",
@@ -1715,10 +2130,37 @@ JSON schema instructions:
             exercise_state = await self._extract_sanomapro_exercise_state(page)
             last_exercise_label = exercise_state.exercise_label
             last_student_name = exercise_state.student_name
+            await self._set_browser_status_overlay(
+                page,
+                mode="running",
+                headline="Grading exercise",
+                detail=(
+                    f"Evaluating {exercise_state.student_name or 'current student'} / "
+                    f"{exercise_state.exercise_label or 'current exercise'} and preparing numeric scores."
+                ),
+                meta={
+                    "Processed": processed_answers,
+                    "Skipped": skipped_answers,
+                    "Student": exercise_state.student_name or "-",
+                    "Exercise": exercise_state.exercise_label or "-",
+                },
+            )
             decision = await self._build_sanomapro_score_decision(payload, exercise_state)
             if decision.should_skip:
                 skipped_answers += 1
                 summary = decision.summary or "Skipped an answer that still needs teacher review."
+                await self._set_browser_status_overlay(
+                    page,
+                    mode="needs_review",
+                    headline="Teacher review needed",
+                    detail=decision.skip_reason or decision.summary or "The current exercise was left for manual review.",
+                    meta={
+                        "Processed": processed_answers,
+                        "Skipped": skipped_answers,
+                        "Student": exercise_state.student_name or "-",
+                        "Exercise": exercise_state.exercise_label or "-",
+                    },
+                )
                 steps.append(
                     {
                         "name": "exercise_skipped",
@@ -1727,6 +2169,27 @@ JSON schema instructions:
                     }
                 )
             else:
+                score_summary = ", ".join(
+                    f"{self._format_score_value(item.score)}/{self._format_score_value(exercise_state.score_fields[item.index].max_score)}"
+                    for item in decision.scores
+                    if item.index < len(exercise_state.score_fields)
+                )
+                await self._set_browser_status_overlay(
+                    page,
+                    mode="running",
+                    headline="Entering scores",
+                    detail=(
+                        "Dry run only. No scores will be typed."
+                        if payload.dry_run
+                        else f"Typing scores into the visible fields: {score_summary or 'no scores'}."
+                    ),
+                    meta={
+                        "Processed": processed_answers,
+                        "Skipped": skipped_answers,
+                        "Student": exercise_state.student_name or "-",
+                        "Exercise": exercise_state.exercise_label or "-",
+                    },
+                )
                 filled_point_fields += await self._apply_sanomapro_score_decision(
                     page,
                     page_url,
@@ -1746,6 +2209,18 @@ JSON schema instructions:
 
             returned_to_overview = False
             if exercise_state.exit_available:
+                await self._set_browser_status_overlay(
+                    page,
+                    mode="running",
+                    headline="Returning to overview",
+                    detail="Leaving the student answer view and going back to the review matrix.",
+                    meta={
+                        "Processed": processed_answers,
+                        "Skipped": skipped_answers,
+                        "Student": exercise_state.student_name or "-",
+                        "Exercise": exercise_state.exercise_label or "-",
+                    },
+                )
                 returned_to_overview = await self._exit_sanomapro_exercise_to_overview(page, page_url)
 
             if decision.should_skip and active_overview_candidate_key:
@@ -1769,6 +2244,18 @@ JSON schema instructions:
                     if summary
                     else "Stopped because the exercise page could not return to the overview safely."
                 )
+                await self._set_browser_status_overlay(
+                    page,
+                    mode="failed",
+                    headline="Could not return safely",
+                    detail="The current exercise page could not return to the overview, so autonomy stopped before retrying anything.",
+                    meta={
+                        "Processed": processed_answers,
+                        "Skipped": skipped_answers,
+                        "Student": exercise_state.student_name or "-",
+                        "Exercise": exercise_state.exercise_label or "-",
+                    },
+                )
                 break
 
         current_url, extracted_text = await self._capture_page_state(
@@ -1784,6 +2271,28 @@ JSON schema instructions:
                 f"{summary} Skipped {skipped_answers} answer(s) that still need teacher review."
                 if summary
                 else f"Skipped {skipped_answers} answer(s) that still need teacher review."
+            )
+
+        final_page = await browser_session.get_current_page()
+        if final_page is not None:
+            await self._set_browser_status_overlay(
+                final_page,
+                mode=final_status if final_status in {"completed", "failed", "needs_review"} else "completed",
+                headline=(
+                    "Autonomous grading completed"
+                    if final_status == "completed"
+                    else "Autonomous grading needs review"
+                    if final_status == "needs_review"
+                    else "Autonomous grading stopped"
+                ),
+                detail=summary,
+                meta={
+                    "Processed": processed_answers,
+                    "Skipped": skipped_answers,
+                    "Fields typed": filled_point_fields,
+                    "Student": last_student_name or "-",
+                    "Exercise": last_exercise_label or "-",
+                },
             )
 
         steps.append(
@@ -2230,6 +2739,19 @@ Return a structured summary when finished.
                 ],
             )
         except Exception as exc:  # pragma: no cover - exercised manually with real browser setup
+            if browser_session is not None:
+                try:
+                    page = await browser_session.get_current_page()
+                    if page is not None:
+                        await self._set_browser_status_overlay(
+                            page,
+                            mode="failed",
+                            headline="Grading run failed",
+                            detail=str(exc),
+                            meta={"Route": "Exam grading"},
+                        )
+                except Exception:
+                    pass
             return ExamSessionGradingTaskResult(
                 job_id=job_id,
                 status="failed",

@@ -8,6 +8,8 @@ type RuntimeOverview = {
   model_router_simple_model: string;
   model_router_standard_model: string;
   model_router_complex_model: string;
+  sanomapro_exercise_grading_provider: string;
+  sanomapro_exercise_grading_model: string;
   browser_agent_provider: string;
   browser_agent_model: string;
   heuristic_fallback_enabled: boolean;
@@ -25,11 +27,13 @@ type RuntimeOverview = {
 const runtimeFallback: RuntimeOverview = {
   app_name: "GradeAgent API",
   model_router_provider: "google",
-  model_router_simple_model: "gemini-3.1-flash-lite-preview",
-  model_router_standard_model: "gemini-3.1-flash-lite-preview",
-  model_router_complex_model: "gemini-3.1-pro-preview",
-  browser_agent_provider: "google",
-  browser_agent_model: "gemini-3.1-pro-preview",
+  model_router_simple_model: "gemini-2.5-flash-lite",
+  model_router_standard_model: "gemini-2.5-flash-lite",
+  model_router_complex_model: "gemini-2.5-flash-lite",
+  sanomapro_exercise_grading_provider: "google",
+  sanomapro_exercise_grading_model: "gemini-2.5-flash-lite",
+  browser_agent_provider: "ollama",
+  browser_agent_model: "qwen3.5:9b",
   heuristic_fallback_enabled: true,
   temporal_enabled: false,
   browser_headless: true,
@@ -45,9 +49,9 @@ const runtimeFallback: RuntimeOverview = {
 const scoringSteps = [
   "Load teacher criteria for the current task.",
   "Classify the text as simple, standard, or complex.",
-  "Route to Gemini Lite, Flash, or Pro.",
+  "Route Sanoma exercise scoring to Gemini 2.5 Flash-Lite.",
   "Return numeric points and evidence snippets.",
-  "Let the browser agent type only the points field."
+  "Let the local browser worker type only the points field."
 ];
 
 export default async function Home() {
@@ -63,9 +67,9 @@ export default async function Home() {
         <p className="terminalPrompt">$ gradeagent status</p>
         <h1 className="heroTitle">Gemini-routed text grading for browser queues.</h1>
         <p className="cliLead">
-          The system reads one short submission at a time, chooses the cheapest Gemini tier that should still
-          handle the task reliably, returns the numeric score, and lets the browser agent enter only that number
-          into the grading platform.
+          The system reads one short submission at a time, uses Gemini 2.5 Flash-Lite for Sanoma exercise scoring,
+          returns the numeric score, and lets the local browser worker enter only that number into the grading
+          platform.
         </p>
         <div className="actionRow">
           <Link className="commandLink" href="/assessments/demo">
@@ -84,9 +88,9 @@ export default async function Home() {
           <span className="statMeta">simple + standard + complex tiers active</span>
         </article>
         <article className="statCard">
-          <span className="statLabel">simple model</span>
-          <strong className="statValue">{runtime.model_router_simple_model}</strong>
-          <span className="statMeta">best for words, phrases, and very short answers</span>
+          <span className="statLabel">Sanoma grader</span>
+          <strong className="statValue">{runtime.sanomapro_exercise_grading_model}</strong>
+          <span className="statMeta">{runtime.sanomapro_exercise_grading_provider} for individual exercise scoring</span>
         </article>
         <article className="statCard">
           <span className="statLabel">browser agent</span>
@@ -135,12 +139,12 @@ export default async function Home() {
             <div className="routeRow">
               <span className="stepName">standard</span>
               <strong className="routeModel">{runtime.model_router_standard_model}</strong>
-              <span className="stepDetail">normal short answers using the same cheap 3.1 Lite model</span>
+              <span className="stepDetail">normal short answers using the same lightweight Gemini 2.5 model</span>
             </div>
             <div className="routeRow">
               <span className="stepName">complex</span>
               <strong className="routeModel">{runtime.model_router_complex_model}</strong>
-              <span className="stepDetail">exam mode, long responses, or dense teacher guidance</span>
+              <span className="stepDetail">kept available for non-Sanoma routes when a heavier grader is configured</span>
             </div>
           </div>
         </article>

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
+from langchain_core.messages import AIMessage
 
 from app.config import Settings
 from app.schemas.api import ExamSessionGradingTaskCreate, ExamSessionGradingTaskResult
@@ -100,8 +101,12 @@ class StubInteractivePage(StubPage):
         super().__init__(url=url, title=title)
         self.evaluate_result = {}
         self.elements_by_selector: dict[str, list[StubElement]] = {}
+        self.recorded_scripts: list[str] = []
 
     async def evaluate(self, script: str) -> str:
+        self.recorded_scripts.append(script)
+        if "__gradeagent_status_overlay__" in script:
+            return True
         if "document.body" in script and "innerText" in script:
             return "Oppilaan vastaus\nTest answer"
         if isinstance(self.evaluate_result, str):
@@ -766,6 +771,73 @@ def test_apply_sanomapro_score_decision_fills_manual_score_inputs() -> None:
 
     assert filled == 1
     assert score_element.filled_values == ["2"]
+
+
+def test_set_browser_status_overlay_injects_visual_overlay_script() -> None:
+    service = BrowserNavigationService(Settings())
+    page = StubInteractivePage("https://arvi.sanomapro.fi/as/teacher/assignment/demo/review")
+
+    asyncio.run(
+        service._set_browser_status_overlay(
+            page,
+            mode="running",
+            headline="Selecting exercise",
+            detail="Opening the next ungraded review cell.",
+            meta={"Processed": 1, "Skipped": 0},
+        )
+    )
+
+    assert any("__gradeagent_status_overlay__" in script for script in page.recorded_scripts)
+    assert any("Selecting exercise" in script for script in page.recorded_scripts)
+
+
+def test_build_sanomapro_score_decision_falls_back_when_model_returns_non_json(monkeypatch) -> None:
+    service = BrowserNavigationService(
+        Settings().model_copy(
+            update={
+                "sanomapro_exercise_grading_provider": "google",
+                "sanomapro_exercise_grading_model": "gemini-2.5-flash-lite",
+            }
+        )
+    )
+    exercise_state = SanomaExerciseState(
+        route="https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise",
+        assignment_title="Demo exam",
+        student_name="Eetu Ahola",
+        exercise_label="Tehtävä 1",
+        question_text="Vad heter huvudstaden i Finland?",
+        answer_text="Helsingfors",
+        score_fields=[
+            SanomaExerciseScoreField(
+                index=0,
+                label="Pistemäärä",
+                current_value="",
+                container_text="Pistemäärä / 4 pistettä",
+                max_score=4,
+            )
+        ],
+    )
+
+    class FakeModel:
+        async def ainvoke(self, messages):
+            return AIMessage(content="This answer deserves 4 points because it is correct.")
+
+    monkeypatch.setattr(
+        "app.services.browser_navigation.build_explicit_grading_chat_model",
+        lambda settings, provider, model_name, routing_tier="standard": FakeModel(),
+    )
+
+    decision = asyncio.run(
+        service._build_sanomapro_score_decision(
+            ExamSessionGradingTaskCreate(instructions="Give full points for correct capitals."),
+            exercise_state,
+        )
+    )
+
+    assert decision.should_skip is False
+    assert len(decision.scores) == 1
+    assert 0 <= decision.scores[0].score <= 4
+    assert "Heuristic fallback applied" in decision.summary
 
 
 def test_grade_exam_from_current_page_uses_sanomapro_autonomy(monkeypatch, tmp_path) -> None:

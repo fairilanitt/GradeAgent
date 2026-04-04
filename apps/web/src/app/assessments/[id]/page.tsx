@@ -73,11 +73,11 @@ const demoPayload: ReviewPayload = {
       status: "awaiting_review",
       confidence: 0.84,
       feedback_text: "Recommended score for entry into the platform points field.",
-      model_summary: "google/gemini-3.1-flash-lite-preview handled simple routing across 2 rubric criteria.",
+      model_summary: "google/gemini-2.5-flash-lite handled simple routing across 2 rubric criteria.",
       policy_flags_json: ["low_confidence"],
       audit_snapshot_json: {
         model_provider: "google",
-        model_name: "gemini-3.1-flash-lite-preview",
+        model_name: "gemini-2.5-flash-lite",
         complexity_score: 2,
         routing_reasons: ["short_response", "single_line_submission"]
       },

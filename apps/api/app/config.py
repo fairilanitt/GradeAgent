@@ -29,6 +29,14 @@ class Settings(BaseSettings):
         default="qwen3.5:9b",
         validation_alias=AliasChoices("MODEL_ROUTER_COMPLEX_MODEL", "DEEP_LANE_MODEL"),
     )
+    sanomapro_exercise_grading_provider: str = Field(
+        default="google",
+        validation_alias=AliasChoices("SANOMAPRO_EXERCISE_GRADING_PROVIDER"),
+    )
+    sanomapro_exercise_grading_model: str = Field(
+        default="gemini-2.5-flash-lite",
+        validation_alias=AliasChoices("SANOMAPRO_EXERCISE_GRADING_MODEL"),
+    )
     browser_agent_provider: str = Field(
         default="ollama",
         validation_alias=AliasChoices("BROWSER_AGENT_PROVIDER", "BROWSER_USE_PROVIDER"),

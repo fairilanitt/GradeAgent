@@ -21,6 +21,7 @@ from app.services.llm_provider import (
     normalize_provider,
     resolve_browser_model_name,
     resolve_google_model_name,
+    resolve_provider_model_name,
 )
 from browser_use.skill_cli.utils import find_chrome_executable
 
@@ -76,6 +77,11 @@ class GradeAgentShell(cmd.Cmd):
         browser_model_label = resolve_browser_model_name(self.settings)
         visual_backend_label = self.browser_service.resolved_visual_backend_label()
         visual_model_label = self.browser_service.resolved_visual_model_label()
+        sanomapro_provider_label, sanomapro_model_label = resolve_provider_model_name(
+            self.settings.sanomapro_exercise_grading_provider,
+            self.settings.sanomapro_exercise_grading_model,
+            self.settings,
+        )
         if normalize_provider(self.settings.model_router_provider) == "google":
             standard_model_label = grading_model_name(self.settings, "standard")
             complex_model_label = grading_model_name(self.settings, "complex")
@@ -98,6 +104,7 @@ class GradeAgentShell(cmd.Cmd):
         config_table.add_row("Simple model", self.settings.model_router_simple_model)
         config_table.add_row("Standard model", standard_model_label)
         config_table.add_row("Complex model", complex_model_label)
+        config_table.add_row("Sanoma grader", f"{sanomapro_provider_label}/{sanomapro_model_label}")
         config_table.add_row(
             "Grading think",
             " ".join(

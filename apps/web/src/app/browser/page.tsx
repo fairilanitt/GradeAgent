@@ -11,8 +11,8 @@ type RuntimeOverview = {
 };
 
 const runtimeFallback: RuntimeOverview = {
-  browser_agent_provider: "google",
-  browser_agent_model: "gemini-3.1-pro-preview",
+  browser_agent_provider: "ollama",
+  browser_agent_model: "qwen3.5:9b",
   browser_headless: true,
   counts: {
     browser_jobs: 0,
@@ -43,8 +43,8 @@ export default async function BrowserConsolePage() {
         <h1 className="heroTitle">Browser worker for ungraded exercise queues.</h1>
         <p className="cliLead">
           This worker uses <code className="inlineCode">browser-use</code> with Playwright so the model can inspect
-          live DOM structure and screenshots while it navigates the site. Browser navigation stays on Gemini Pro by
-          default because page understanding and safe field targeting are the expensive part.
+          live DOM structure and screenshots while it navigates the site. Browser navigation and clicking stay on the
+          local provider, while Sanoma exercise scoring can be delegated to a separate remote grading model.
         </p>
       </section>
 

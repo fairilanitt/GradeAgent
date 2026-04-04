@@ -220,6 +220,8 @@ class RuntimeOverview(BaseModel):
     model_router_simple_model: str
     model_router_standard_model: str
     model_router_complex_model: str
+    sanomapro_exercise_grading_provider: str
+    sanomapro_exercise_grading_model: str
     ollama_simple_reasoning_mode: str | bool
     ollama_standard_reasoning_mode: str | bool
     ollama_complex_reasoning_mode: str | bool

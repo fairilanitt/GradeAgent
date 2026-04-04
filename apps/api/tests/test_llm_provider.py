@@ -12,6 +12,7 @@ from app.services.llm_provider import (
     require_ollama_model_available,
     resolve_browser_model_name,
     resolve_google_model_name,
+    resolve_provider_model_name,
 )
 from app.services.model_router import GradeRequest, HeuristicModelRouter, ManagedModelRouter, get_model_router, resolve_routing_decision
 
@@ -217,6 +218,22 @@ def test_google_paid_tier_can_keep_pro_model() -> None:
     settings = Settings().model_copy(update={"google_api_free_tier_only": False})
 
     assert resolve_google_model_name("gemini-3.1-pro-preview", settings) == "gemini-3.1-pro-preview"
+
+
+def test_resolve_provider_model_name_keeps_gemini_25_flash_lite() -> None:
+    settings = Settings().model_copy(update={"google_api_free_tier_only": True})
+
+    provider, model_name = resolve_provider_model_name("google", "gemini-2.5-flash-lite", settings)
+
+    assert provider == "google"
+    assert model_name == "gemini-2.5-flash-lite"
+
+
+def test_settings_default_sanomapro_exercise_grader_uses_google_flash_lite() -> None:
+    settings = Settings()
+
+    assert settings.sanomapro_exercise_grading_provider == "google"
+    assert settings.sanomapro_exercise_grading_model == "gemini-2.5-flash-lite"
 
 
 def test_local_default_provider_uses_managed_router_when_requested() -> None:

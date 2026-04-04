@@ -38,6 +38,7 @@ from app.services.llm_provider import (
     grading_model_name,
     grading_reasoning_mode,
     normalize_provider,
+    resolve_provider_model_name,
     resolve_browser_model_name,
     should_use_heuristic_grading,
 )
@@ -291,6 +292,11 @@ def get_runtime_overview(session: Session = Depends(get_session)) -> RuntimeOver
     active_rubrics = session.exec(select(RubricProfile).where(RubricProfile.status == "active")).all()
     model_router_provider = normalize_provider(settings.model_router_provider)
     browser_agent_provider = normalize_provider(settings.browser_agent_provider)
+    sanomapro_provider, sanomapro_model = resolve_provider_model_name(
+        settings.sanomapro_exercise_grading_provider,
+        settings.sanomapro_exercise_grading_model,
+        settings,
+    )
     return RuntimeOverview(
         app_name=settings.app_name,
         model_router_provider=model_router_provider,
@@ -299,6 +305,8 @@ def get_runtime_overview(session: Session = Depends(get_session)) -> RuntimeOver
         model_router_complex_model=grading_model_name(settings, "complex")
         if model_router_provider == "google"
         else settings.model_router_complex_model,
+        sanomapro_exercise_grading_provider=sanomapro_provider,
+        sanomapro_exercise_grading_model=sanomapro_model,
         ollama_simple_reasoning_mode=grading_reasoning_mode(settings, "simple"),
         ollama_standard_reasoning_mode=grading_reasoning_mode(settings, "standard"),
         ollama_complex_reasoning_mode=grading_reasoning_mode(settings, "complex"),
