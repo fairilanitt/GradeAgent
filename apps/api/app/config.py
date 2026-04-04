@@ -114,6 +114,14 @@ class Settings(BaseSettings):
     google_api_key: str | None = None
     browser_headless: bool = False
     browser_debug_port: int = 9222
+    browser_attach_to_existing_chrome: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("BROWSER_ATTACH_TO_EXISTING_CHROME"),
+    )
+    browser_existing_chrome_cdp_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("BROWSER_EXISTING_CHROME_CDP_URL"),
+    )
     browser_use_system_chrome: bool = Field(
         default=False,
         validation_alias=AliasChoices("BROWSER_USE_SYSTEM_CHROME", "BROWSER_SYSTEM_CHROME"),

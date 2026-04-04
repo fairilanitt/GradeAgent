@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
 
+import httpx
 from browser_use import Agent, BrowserSession
 from browser_use.browser.events import SwitchTabEvent
 from browser_use.skill_cli.utils import find_chrome_executable, get_chrome_profile_path
@@ -65,6 +66,12 @@ class BrowserNavigationService:
 
     def _profile_directory_name(self) -> str:
         return self._chrome_profile_directory() or "Default"
+
+    def _resolved_existing_chrome_cdp_url(self) -> str:
+        configured = (self.settings.browser_existing_chrome_cdp_url or "").strip()
+        if configured:
+            return configured
+        return f"http://127.0.0.1:{self.settings.browser_debug_port}"
 
     def _persistent_profile_root(self) -> Path:
         configured_dir = self.settings.browser_persistent_profile_dir
@@ -241,6 +248,14 @@ class BrowserNavigationService:
         allowed_domains: list[str] | None = None,
         downloads_path: str | None = None,
     ) -> BrowserSession:
+        if self.settings.browser_attach_to_existing_chrome:
+            return BrowserSession(
+                cdp_url=self._resolved_existing_chrome_cdp_url(),
+                keep_alive=keep_alive,
+                allowed_domains=allowed_domains,
+                downloads_path=downloads_path,
+            )
+
         profile_root = self._persistent_profile_root()
         executable_path: str | None = None
         if self.settings.browser_use_system_chrome:
@@ -262,6 +277,30 @@ class BrowserNavigationService:
         return BrowserSession(
             **session_kwargs,
         )
+
+    async def list_open_tabs(self, browser_session: BrowserSession) -> list[dict[str, str]]:
+        tabs = await browser_session.get_tabs()
+        return [
+            {
+                "target_id": getattr(tab, "target_id", ""),
+                "title": getattr(tab, "title", "") or "",
+                "url": getattr(tab, "url", "") or "",
+            }
+            for tab in tabs
+        ]
+
+    def can_reach_existing_chrome_debugger(self) -> bool:
+        if not self.settings.browser_attach_to_existing_chrome:
+            return False
+        try:
+            response = httpx.get(
+                f"{self._resolved_existing_chrome_cdp_url().rstrip('/')}/json/version",
+                timeout=2.0,
+            )
+            response.raise_for_status()
+            return True
+        except Exception:
+            return False
 
     def _job_downloads_dir(self, job_id: str) -> Path:
         return self._artifact_dir() / f"{job_id}-downloads"

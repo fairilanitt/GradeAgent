@@ -184,6 +184,20 @@ def test_build_interactive_session_uses_persistent_profile_dir(tmp_path) -> None
     assert session.browser_profile.enable_default_extensions is False
 
 
+def test_build_interactive_session_can_attach_to_existing_chrome() -> None:
+    settings = Settings().model_copy(
+        update={
+            "browser_attach_to_existing_chrome": True,
+            "browser_debug_port": 9333,
+        }
+    )
+    service = BrowserNavigationService(settings)
+
+    session = service._build_interactive_session("job-attach")
+
+    assert session.cdp_url == "http://127.0.0.1:9333"
+
+
 def test_system_chrome_bootstrap_copies_once_into_persistent_profile(tmp_path, monkeypatch) -> None:
     source_root = tmp_path / "chrome-user-data"
     source_profile = source_root / "Default"

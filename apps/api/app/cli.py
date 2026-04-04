@@ -110,6 +110,9 @@ class GradeAgentShell(cmd.Cmd):
         ) == "google":
             print(f"Free tier only:  {self.settings.google_api_free_tier_only}")
         print(f"Headless:        {self.settings.browser_headless}")
+        print(f"Attach Chrome:   {self.settings.browser_attach_to_existing_chrome}")
+        if self.settings.browser_attach_to_existing_chrome:
+            print(f"CDP URL:         {self.browser_service._resolved_existing_chrome_cdp_url()}")
         print(f"System Chrome:   {self.settings.browser_use_system_chrome}")
         print(f"Chrome binary:   {system_chrome_path or '-'}")
         print(f"Chrome profile:  {chrome_profile_label}")
@@ -179,7 +182,16 @@ class GradeAgentShell(cmd.Cmd):
             asyncio.set_event_loop(loop)
 
             print("\n[1/5] Launching managed browser window...")
-            if self.settings.browser_use_system_chrome:
+            if self.settings.browser_attach_to_existing_chrome:
+                print(
+                    "Attaching to an already running Chrome over CDP so GradeAgent can see the tabs you already have open."
+                )
+                if not self.browser_service.can_reach_existing_chrome_debugger():
+                    print(
+                        "Warning: Chrome remote debugging was not reachable. "
+                        "Start Chrome with --remote-debugging-port=9222 or set BROWSER_EXISTING_CHROME_CDP_URL."
+                    )
+            elif self.settings.browser_use_system_chrome:
                 print(
                     "Using your installed Chrome with a slim GradeAgent profile that keeps login/site data and avoids most extra browser state. "
                     "If you need a fresh import, close Chrome and delete the GradeAgent login profile folder first."
@@ -200,6 +212,14 @@ class GradeAgentShell(cmd.Cmd):
             print("GradeAgent assumes the managed browser is already on the correct exam page.")
             print("If the wrong page is open, navigate manually to the correct exam page, then come back here and press Enter.")
             input()
+
+            detected_tabs = loop.run_until_complete(self.browser_service.list_open_tabs(browser_session))
+            if detected_tabs:
+                print("\nDetected tabs")
+                print("-------------")
+                for index, tab in enumerate(detected_tabs, start=1):
+                    title = tab["title"] or "-"
+                    print(f"{index}. {title} | {tab['url'] or '-'}")
 
             current_url = loop.run_until_complete(self.browser_service.get_current_page_url(browser_session))
             print(f"[3/5] Starting grading from current page: {current_url or 'unknown page'}")
