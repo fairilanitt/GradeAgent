@@ -204,8 +204,8 @@ def test_runtime_overview_exposes_router_configuration(client) -> None:
     assert payload["model_router_provider"] == "heuristic"
     assert payload["model_router_simple_model"] == "qwen3.5:4b"
     assert payload["model_router_complex_model"] == "qwen3.5:9b"
-    assert payload["sanomapro_exercise_grading_provider"] == "google"
-    assert payload["sanomapro_exercise_grading_model"] == "gemini-2.5-flash-lite"
+    assert payload["sanomapro_exercise_grading_provider"] == "vertex_ai"
+    assert payload["sanomapro_exercise_grading_model"] == "gemini-3.1-pro-preview"
     assert payload["ollama_simple_reasoning_mode"] is False
     assert payload["ollama_complex_reasoning_mode"] == "high"
     assert payload["browser_agent_provider"] == "ollama"

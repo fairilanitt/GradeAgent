@@ -204,6 +204,7 @@ class ExamSessionGradingTaskResult(BrowserTaskResult):
     filled_point_fields: int = 0
     current_exercise_label: str | None = None
     current_student_name: str | None = None
+    report_path: str | None = None
 
 
 class RuntimeCounts(BaseModel):

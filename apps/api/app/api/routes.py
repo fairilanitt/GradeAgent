@@ -303,7 +303,7 @@ def get_runtime_overview(session: Session = Depends(get_session)) -> RuntimeOver
         model_router_simple_model=settings.model_router_simple_model,
         model_router_standard_model=settings.model_router_standard_model,
         model_router_complex_model=grading_model_name(settings, "complex")
-        if model_router_provider == "google"
+        if model_router_provider in {"google", "vertex_ai"}
         else settings.model_router_complex_model,
         sanomapro_exercise_grading_provider=sanomapro_provider,
         sanomapro_exercise_grading_model=sanomapro_model,

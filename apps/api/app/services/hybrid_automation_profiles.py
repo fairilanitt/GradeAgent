@@ -258,6 +258,21 @@ SANOMAPRO_REVIEW_EXERCISE_PROFILE = HybridAutomationPageProfile(
             "Moves to the next student within the same exercise.",
         ),
         HybridAutomationSelector(
+            "previous_student_button",
+            "button.student-feedback__student-navigation-button.left-button[ng-click='ctrl.gotoPreviousStudent()']",
+            "Moves to the previous student within the same exercise.",
+        ),
+        HybridAutomationSelector(
+            "student_name_heading",
+            "h2.student-feedback__student-name",
+            "Large black heading that shows the current student's name.",
+        ),
+        HybridAutomationSelector(
+            "student_counter_heading",
+            "h2.student-feedback__student-number",
+            "Large black heading that shows the current student position like 'Oppilas 21/31'.",
+        ),
+        HybridAutomationSelector(
             "review_exercise_content",
             ".review-exercise-content",
             "Main review layout container for the opened exercise.",
@@ -304,13 +319,23 @@ SANOMAPRO_REVIEW_EXERCISE_PROFILE = HybridAutomationPageProfile(
         ),
         HybridAutomationSelector(
             "document_progress_link",
-            "a[ng-click='ctrl.goToDocument(document)']",
-            "Bottom progress navigation for switching exercises/documents.",
+            "ul.assessment-progress-section-documents.clickable.small a[ng-click='ctrl.goToDocument(document)']",
+            "Right-side main-menu navigation for switching exercises/documents.",
+        ),
+        HybridAutomationSelector(
+            "document_progress_section_name",
+            ".assessment-progress-section-name",
+            "Right-side main-menu exercise type label such as Text 4 or Grammatik.",
         ),
         HybridAutomationSelector(
             "next_document_button",
-            "button.assessment-navigation-next[ng-click='ctrl.navigateNext()']",
-            "Moves to the next document or exercise in the bottom navigator.",
+            "button.icon-button.icon-wave-next.assessment-navigation-button.assessment-navigation-next[ng-click='ctrl.navigateNext()']",
+            "Fallback button that moves to the next document or exercise in the bottom navigator.",
+        ),
+        HybridAutomationSelector(
+            "previous_document_button",
+            "button.icon-button.icon-wave-prev.assessment-navigation-button.assessment-navigation-prev[ng-click='ctrl.navigatePrevious()']",
+            "Fallback button that moves to the previous document or exercise in the bottom navigator.",
         ),
     ),
     dom_signals=(
@@ -333,6 +358,11 @@ SANOMAPRO_REVIEW_EXERCISE_PROFILE = HybridAutomationPageProfile(
             "goto_next_student",
             "ctrl.gotoNextStudent()",
             "Angular action for the next-student button.",
+        ),
+        HybridAutomationDomSignal(
+            "goto_previous_student",
+            "ctrl.gotoPreviousStudent()",
+            "Angular action for the previous-student button.",
         ),
         HybridAutomationDomSignal(
             "toggle_feedback",
@@ -359,6 +389,11 @@ SANOMAPRO_REVIEW_EXERCISE_PROFILE = HybridAutomationPageProfile(
             "ctrl.navigateNext()",
             "Angular action for the next-document wave button.",
         ),
+        HybridAutomationDomSignal(
+            "previous_document_nav",
+            "ctrl.navigatePrevious()",
+            "Angular action for the previous-document wave button.",
+        ),
     ),
     text_markers=(
         "Poistu oppilaan vastauksista",
@@ -366,10 +401,13 @@ SANOMAPRO_REVIEW_EXERCISE_PROFILE = HybridAutomationPageProfile(
         "Pistemäärä",
         "Kommentit",
         "Oppilas",
+        "Mallivastaus",
     ),
     notes=(
         "The detailed review route includes assignment, activity, document, and student identifiers in the URL.",
         "The numeric score field is a plain text input; Hybrid Automation should type only the number and let ctrl.updateScore() commit on blur.",
+        "Grade current exercises top-to-bottom by using the green student navigation arrows and reading the black Oppilas X/Y counter.",
+        "When the current exercise reaches the last student, switch to the next exercise from the right-side main menu document links before falling back to the wave arrow buttons.",
     ),
 )
 

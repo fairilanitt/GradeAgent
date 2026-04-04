@@ -4,7 +4,9 @@ from app.config import Settings
 from app.schemas.api import CriterionDefinition
 from app.services.llm_provider import (
     ProviderConfigurationError,
+    VertexAIChatModel,
     browser_model_supports_vision,
+    build_explicit_grading_chat_model,
     build_browser_use_llm,
     grading_reasoning_mode,
     normalize_provider,
@@ -13,6 +15,7 @@ from app.services.llm_provider import (
     resolve_browser_model_name,
     resolve_google_model_name,
     resolve_provider_model_name,
+    vertex_ai_thinking_level,
 )
 from app.services.model_router import GradeRequest, HeuristicModelRouter, ManagedModelRouter, get_model_router, resolve_routing_decision
 
@@ -20,6 +23,7 @@ from app.services.model_router import GradeRequest, HeuristicModelRouter, Manage
 def test_provider_aliases_are_normalized() -> None:
     assert normalize_provider("claude") == "anthropic"
     assert normalize_provider("gemini") == "google"
+    assert normalize_provider("vertexai") == "vertex_ai"
     assert normalize_provider("local") == "ollama"
     assert normalize_provider("openai") == "openai"
 
@@ -220,6 +224,73 @@ def test_google_paid_tier_can_keep_pro_model() -> None:
     assert resolve_google_model_name("gemini-3.1-pro-preview", settings) == "gemini-3.1-pro-preview"
 
 
+def test_vertex_ai_thinking_levels_follow_routing_tier() -> None:
+    settings = Settings().model_copy(
+        update={
+            "vertex_ai_simple_thinking_level": "LOW",
+            "vertex_ai_standard_thinking_level": "MEDIUM",
+            "vertex_ai_complex_thinking_level": "HIGH",
+        }
+    )
+
+    assert vertex_ai_thinking_level(settings, "simple") == "LOW"
+    assert vertex_ai_thinking_level(settings, "standard") == "MEDIUM"
+    assert vertex_ai_thinking_level(settings, "complex") == "HIGH"
+
+
+def test_build_explicit_grading_chat_model_supports_vertex_ai() -> None:
+    settings = Settings().model_copy(
+        update={
+            "vertex_ai_project": "gradeagent-test",
+            "vertex_ai_location": "global",
+        }
+    )
+
+    model = build_explicit_grading_chat_model(
+        settings,
+        provider="vertex_ai",
+        model_name="gemini-3.1-pro-preview",
+        routing_tier="standard",
+    )
+
+    assert isinstance(model, VertexAIChatModel)
+    assert model.model == "gemini-3.1-pro-preview"
+    assert model.project == "gradeagent-test"
+    assert model.location == "global"
+    assert model.thinking_level == "MEDIUM"
+
+
+def test_build_explicit_grading_chat_model_supports_vertex_ai_api_key_mode() -> None:
+    settings = Settings().model_copy(
+        update={
+            "vertex_ai_project": None,
+            "vertex_ai_location": "global",
+            "google_api_key": "test-key",
+        }
+    )
+
+    model = build_explicit_grading_chat_model(
+        settings,
+        provider="vertex_ai",
+        model_name="gemini-3.1-pro-preview",
+        routing_tier="standard",
+    )
+
+    assert isinstance(model, VertexAIChatModel)
+    assert model.api_key == "test-key"
+    assert model.project is None
+    assert model.location is None
+
+
+def test_build_browser_use_llm_rejects_vertex_ai_provider() -> None:
+    settings = Settings().model_copy(update={"browser_agent_provider": "vertex_ai"})
+
+    with pytest.raises(ProviderConfigurationError) as exc_info:
+        build_browser_use_llm(settings)
+
+    assert "managed grading only" in str(exc_info.value)
+
+
 def test_resolve_provider_model_name_keeps_gemini_25_flash_lite() -> None:
     settings = Settings().model_copy(update={"google_api_free_tier_only": True})
 
@@ -229,11 +300,11 @@ def test_resolve_provider_model_name_keeps_gemini_25_flash_lite() -> None:
     assert model_name == "gemini-2.5-flash-lite"
 
 
-def test_settings_default_sanomapro_exercise_grader_uses_google_flash_lite() -> None:
+def test_settings_default_sanomapro_exercise_grader_uses_vertex_ai_gemini_31_pro() -> None:
     settings = Settings()
 
-    assert settings.sanomapro_exercise_grading_provider == "google"
-    assert settings.sanomapro_exercise_grading_model == "gemini-2.5-flash-lite"
+    assert settings.sanomapro_exercise_grading_provider == "vertex_ai"
+    assert settings.sanomapro_exercise_grading_model == "gemini-3.1-pro-preview"
 
 
 def test_local_default_provider_uses_managed_router_when_requested() -> None:

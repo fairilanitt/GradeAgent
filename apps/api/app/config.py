@@ -30,11 +30,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MODEL_ROUTER_COMPLEX_MODEL", "DEEP_LANE_MODEL"),
     )
     sanomapro_exercise_grading_provider: str = Field(
-        default="google",
+        default="vertex_ai",
         validation_alias=AliasChoices("SANOMAPRO_EXERCISE_GRADING_PROVIDER"),
     )
     sanomapro_exercise_grading_model: str = Field(
-        default="gemini-2.5-flash-lite",
+        default="gemini-3.1-pro-preview",
         validation_alias=AliasChoices("SANOMAPRO_EXERCISE_GRADING_MODEL"),
     )
     browser_agent_provider: str = Field(
@@ -144,6 +144,26 @@ class Settings(BaseSettings):
     google_api_free_tier_fallback_model: str = Field(
         default="gemini-3-flash-preview",
         validation_alias=AliasChoices("GOOGLE_API_FREE_TIER_FALLBACK_MODEL"),
+    )
+    vertex_ai_project: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VERTEX_AI_PROJECT", "GOOGLE_CLOUD_PROJECT"),
+    )
+    vertex_ai_location: str = Field(
+        default="global",
+        validation_alias=AliasChoices("VERTEX_AI_LOCATION", "GOOGLE_CLOUD_LOCATION"),
+    )
+    vertex_ai_simple_thinking_level: str = Field(
+        default="LOW",
+        validation_alias=AliasChoices("VERTEX_AI_SIMPLE_THINKING_LEVEL"),
+    )
+    vertex_ai_standard_thinking_level: str = Field(
+        default="MEDIUM",
+        validation_alias=AliasChoices("VERTEX_AI_STANDARD_THINKING_LEVEL"),
+    )
+    vertex_ai_complex_thinking_level: str = Field(
+        default="HIGH",
+        validation_alias=AliasChoices("VERTEX_AI_COMPLEX_THINKING_LEVEL"),
     )
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None

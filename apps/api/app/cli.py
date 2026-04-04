@@ -82,7 +82,7 @@ class GradeAgentShell(cmd.Cmd):
             self.settings.sanomapro_exercise_grading_model,
             self.settings,
         )
-        if normalize_provider(self.settings.model_router_provider) == "google":
+        if normalize_provider(self.settings.model_router_provider) in {"google", "vertex_ai"}:
             standard_model_label = grading_model_name(self.settings, "standard")
             complex_model_label = grading_model_name(self.settings, "complex")
         if normalize_provider(self.settings.browser_agent_provider) == "google":
@@ -127,6 +127,9 @@ class GradeAgentShell(cmd.Cmd):
             self.settings.browser_agent_provider
         ) == "google":
             config_table.add_row("Free tier only", str(self.settings.google_api_free_tier_only))
+        if sanomapro_provider_label == "vertex_ai" or normalize_provider(self.settings.model_router_provider) == "vertex_ai":
+            config_table.add_row("Vertex project", self.settings.vertex_ai_project or "-")
+            config_table.add_row("Vertex location", self.settings.vertex_ai_location)
         config_table.add_row("Headless", str(self.settings.browser_headless))
         config_table.add_row("Attach Chrome", str(self.settings.browser_attach_to_existing_chrome))
         if self.settings.browser_attach_to_existing_chrome:
@@ -232,6 +235,7 @@ class GradeAgentShell(cmd.Cmd):
         summary_table.add_row("Filled point fields", str(result.filled_point_fields))
         summary_table.add_row("Current exercise", result.current_exercise_label or "-")
         summary_table.add_row("Current student", result.current_student_name or "-")
+        summary_table.add_row("Report", result.report_path or "-")
         summary_table.add_row("Screenshot", result.screenshot_path or "-")
         summary_table.add_row("Summary", result.summary)
         return Panel(summary_table, title=title, border_style="green", expand=False)
@@ -315,7 +319,14 @@ class GradeAgentShell(cmd.Cmd):
             self.console.print()
             self.console.print(Panel("Step 5 of 5: Done.", border_style="green"))
         except KeyboardInterrupt:
-            self.console.print("\nGrading interrupted by user.", style="bold yellow")
+            report_path = self.browser_service.exam_grading_report_path(job_id)
+            if report_path.exists():
+                self.console.print(
+                    f"\nGrading interrupted by user. Partial report saved to {report_path}.",
+                    style="bold yellow",
+                )
+            else:
+                self.console.print("\nGrading interrupted by user.", style="bold yellow")
         except Exception as exc:
             self.console.print(f"\nGrading failed: {exc}", style="bold red")
         finally:

@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
+import psutil
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from ollama import AsyncClient as OllamaAsyncClient
@@ -72,6 +73,9 @@ class SanomaOverviewState(BaseModel):
     route: str = ""
     assignment_title: str = ""
     visible_cell_count: int = Field(default=0, ge=0)
+    reviewed_cell_count: int = Field(default=0, ge=0)
+    unreviewed_cell_count: int = Field(default=0, ge=0)
+    fully_reviewed: bool = False
     pending_candidates: list[SanomaOverviewCandidate] = Field(default_factory=list)
 
 
@@ -83,15 +87,33 @@ class SanomaExerciseScoreField(BaseModel):
     max_score: float = Field(default=0, ge=0)
 
 
+class SanomaProgressDocumentLink(BaseModel):
+    selector_index: int = Field(ge=0)
+    section_name: str = ""
+    label: str = ""
+    reviewed: bool = False
+    current: bool = False
+
+
 class SanomaExerciseState(BaseModel):
     route: str = ""
     assignment_title: str = ""
     student_name: str | None = None
     student_progress: str | None = None
+    current_student_index: int | None = None
+    student_count: int | None = None
     exercise_label: str | None = None
+    current_section_name: str | None = None
+    current_progress_document_label: str | None = None
+    current_progress_document_selector_index: int | None = None
+    next_progress_document_selector_index: int | None = None
+    next_progress_document_label: str | None = None
     question_text: str = ""
     answer_text: str = ""
+    model_answer_text: str = ""
     score_fields: list[SanomaExerciseScoreField] = Field(default_factory=list)
+    progress_documents: list[SanomaProgressDocumentLink] = Field(default_factory=list)
+    previous_student_available: bool = False
     next_student_available: bool = False
     exit_available: bool = False
     score_tab_available: bool = False
@@ -110,6 +132,19 @@ class SanomaScoreDecision(BaseModel):
     should_skip: bool = False
     skip_reason: str = ""
     scores: list[SanomaScoreDecisionField] = Field(default_factory=list)
+
+
+class SanomaGradingReportEntry(BaseModel):
+    student_name: str = ""
+    student_progress: str | None = None
+    exercise_label: str | None = None
+    question_text: str = ""
+    answer_text: str = ""
+    model_answer_text: str = ""
+    points_text: str = ""
+    basis_lines: list[str] = Field(default_factory=list)
+    exercise_url: str = ""
+    status: str = "scored"
 
 
 class BrowserNavigationService:
@@ -156,6 +191,73 @@ class BrowserNavigationService:
         if configured:
             return configured
         return f"http://127.0.0.1:{self.settings.browser_debug_port}"
+
+    def _normalized_path(self, path: str | Path | None) -> str | None:
+        if path is None:
+            return None
+        try:
+            return str(Path(path).expanduser().resolve())
+        except Exception:
+            try:
+                return str(Path(path).expanduser())
+            except Exception:
+                return str(path)
+
+    def _cli_arg_value(self, cmdline: list[str], name: str) -> str | None:
+        prefixed_name = f"--{name}="
+        flag_name = f"--{name}"
+        for index, token in enumerate(cmdline):
+            if token.startswith(prefixed_name):
+                return token[len(prefixed_name) :].strip() or None
+            if token == flag_name and index + 1 < len(cmdline):
+                value = (cmdline[index + 1] or "").strip()
+                return value or None
+        return None
+
+    def _cdp_http_url_is_reachable(self, cdp_url: str) -> bool:
+        try:
+            response = httpx.get(
+                f"{cdp_url.rstrip('/')}/json/version",
+                timeout=1.5,
+            )
+            response.raise_for_status()
+            return bool(response.json().get("webSocketDebuggerUrl"))
+        except Exception:
+            return False
+
+    def _discover_running_gradeagent_cdp_url(self, profile_root: Path) -> str | None:
+        target_profile = self._normalized_path(profile_root)
+        if not target_profile:
+            return None
+
+        seen_ports: set[int] = set()
+        for process in psutil.process_iter(["cmdline"]):
+            try:
+                cmdline = [str(part) for part in (process.info.get("cmdline") or []) if part]
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            if not cmdline:
+                continue
+
+            user_data_dir = self._cli_arg_value(cmdline, "user-data-dir")
+            if self._normalized_path(user_data_dir) != target_profile:
+                continue
+
+            port_text = self._cli_arg_value(cmdline, "remote-debugging-port")
+            if not port_text:
+                continue
+            try:
+                port = int(port_text)
+            except (TypeError, ValueError):
+                continue
+            if port <= 0 or port in seen_ports:
+                continue
+            seen_ports.add(port)
+
+            cdp_url = f"http://127.0.0.1:{port}"
+            if self._cdp_http_url_is_reachable(cdp_url):
+                return cdp_url
+        return None
 
     def _persistent_profile_root(self) -> Path:
         configured_dir = self.settings.browser_persistent_profile_dir
@@ -986,6 +1088,15 @@ Be conservative. If uncertain, do not choose exam_grading.
             )
 
         profile_root = self._persistent_profile_root()
+        discovered_cdp_url = self._discover_running_gradeagent_cdp_url(profile_root)
+        if discovered_cdp_url:
+            return BrowserSession(
+                cdp_url=discovered_cdp_url,
+                keep_alive=keep_alive,
+                allowed_domains=allowed_domains,
+                downloads_path=downloads_path,
+            )
+
         executable_path: str | None = None
         if self.settings.browser_use_system_chrome:
             self._bootstrap_profile_from_system_chrome(profile_root)
@@ -1028,6 +1139,9 @@ Be conservative. If uncertain, do not choose exam_grading.
 
     def _job_screenshot_path(self, job_id: str) -> Path:
         return self._artifact_dir() / f"{job_id}.png"
+
+    def exam_grading_report_path(self, job_id: str) -> Path:
+        return self._artifact_dir() / f"{job_id}-grading-report.txt"
 
     def _is_stale(self, path: Path, min_age_seconds: int) -> bool:
         try:
@@ -1309,6 +1423,345 @@ Be conservative. If uncertain, do not choose exam_grading.
             return str(int(rounded))
         return f"{rounded:.2f}".rstrip("0").rstrip(".")
 
+    def _overlay_preview_text(self, text: str, *, limit: int = 240) -> str:
+        normalized = re.sub(r"\s+", " ", (text or "").strip())
+        if not normalized:
+            return "-"
+        if len(normalized) <= limit:
+            return normalized
+        return f"{normalized[: limit - 1].rstrip()}…"
+
+    def _sanomapro_points_overlay_text(
+        self,
+        exercise_state: SanomaExerciseState,
+        decision: SanomaScoreDecision | None = None,
+    ) -> str:
+        if decision is None or not decision.scores:
+            return "Pending"
+
+        field_by_index = {field.index: field for field in exercise_state.score_fields}
+        if len(decision.scores) == 1:
+            item = decision.scores[0]
+            field = field_by_index.get(item.index)
+            max_score = field.max_score if field is not None else item.score
+            return f"{self._format_score_value(item.score)} / {self._format_score_value(max_score)}"
+
+        total_score = 0.0
+        total_max = 0.0
+        parts: list[str] = []
+        for item in sorted(decision.scores, key=lambda score_item: score_item.index):
+            field = field_by_index.get(item.index)
+            max_score = field.max_score if field is not None else item.score
+            total_score += item.score
+            total_max += max_score
+            parts.append(f"{self._format_score_value(item.score)} / {self._format_score_value(max_score)}")
+        return (
+            f"{self._format_score_value(total_score)} / {self._format_score_value(total_max)}"
+            f" ({', '.join(parts)})"
+        )
+
+    def _sanomapro_exercise_overlay_meta(
+        self,
+        exercise_state: SanomaExerciseState,
+        *,
+        points_text: str,
+        reasoning_text: str | None = None,
+    ) -> dict[str, str]:
+        meta = {
+            "Oppilaan vastaus": self._overlay_preview_text(exercise_state.answer_text),
+            "Mallivastaus": self._overlay_preview_text(exercise_state.model_answer_text),
+            "Points": points_text,
+        }
+        if reasoning_text:
+            meta["Reasoning"] = self._overlay_preview_text(reasoning_text, limit=320)
+        return meta
+
+    def _sanomapro_reasoning_overlay_text(self, decision: SanomaScoreDecision | None = None) -> str | None:
+        if decision is None:
+            return "Thinking about the score against the model answer."
+
+        parts: list[str] = []
+        if decision.summary.strip():
+            parts.append(decision.summary.strip())
+        for field_decision in sorted(decision.scores, key=lambda item: item.index):
+            rationale = field_decision.rationale.strip()
+            if not rationale:
+                continue
+            prefix = "Points" if len(decision.scores) == 1 else f"Field {field_decision.index + 1}"
+            parts.append(f"{prefix}: {rationale}")
+        if decision.should_skip and decision.skip_reason.strip():
+            parts.append(f"Needs review: {decision.skip_reason.strip()}")
+        if not parts:
+            return None
+        return " ".join(parts)
+
+    def _sanomapro_decision_basis_lines(self, decision: SanomaScoreDecision) -> list[str]:
+        lines: list[str] = []
+        if decision.summary.strip():
+            lines.append(f"Summary: {decision.summary.strip()}")
+        if decision.skip_reason.strip():
+            lines.append(f"Skip reason: {decision.skip_reason.strip()}")
+        for field_decision in sorted(decision.scores, key=lambda item: item.index):
+            rationale = field_decision.rationale.strip() or "No rationale provided."
+            lines.append(f"Field {field_decision.index + 1}: {rationale}")
+        if not lines:
+            lines.append("No grading basis was recorded.")
+        return lines
+
+    def _sanomapro_report_points_text(
+        self,
+        exercise_state: SanomaExerciseState,
+        decision: SanomaScoreDecision,
+        *,
+        dry_run: bool,
+    ) -> str:
+        if decision.should_skip:
+            return "Needs review"
+        base_points = self._sanomapro_points_overlay_text(exercise_state, decision)
+        return f"{base_points} (dry run)" if dry_run else base_points
+
+    def _sanomapro_report_entry(
+        self,
+        exercise_state: SanomaExerciseState,
+        decision: SanomaScoreDecision,
+        *,
+        exercise_url: str,
+        dry_run: bool,
+    ) -> SanomaGradingReportEntry:
+        return SanomaGradingReportEntry(
+            student_name=exercise_state.student_name or "Unknown student",
+            student_progress=exercise_state.student_progress,
+            exercise_label=exercise_state.exercise_label,
+            question_text=exercise_state.question_text,
+            answer_text=exercise_state.answer_text,
+            model_answer_text=exercise_state.model_answer_text,
+            points_text=self._sanomapro_report_points_text(exercise_state, decision, dry_run=dry_run),
+            basis_lines=self._sanomapro_decision_basis_lines(decision),
+            exercise_url=exercise_url,
+            status="needs_review" if decision.should_skip else ("dry_run" if dry_run else "scored"),
+        )
+
+    def _sanomapro_document_key(self, exercise_state: SanomaExerciseState) -> str:
+        route = exercise_state.route or ""
+        match = re.search(r"/document/([^/]+)/exercise", route)
+        if match:
+            return match.group(1)
+        return "|".join(
+            part
+            for part in (
+                exercise_state.current_section_name or "",
+                exercise_state.current_progress_document_label or "",
+                exercise_state.exercise_label or "",
+            )
+            if part
+        )
+
+    def _sanomapro_has_existing_scores(self, exercise_state: SanomaExerciseState) -> bool:
+        if not exercise_state.score_fields:
+            return False
+        return all(field.current_value.strip() for field in exercise_state.score_fields)
+
+    def _render_sanomapro_grading_report(
+        self,
+        *,
+        job_id: str,
+        final_status: str,
+        summary: str,
+        entries: list[SanomaGradingReportEntry],
+        interrupted: bool = False,
+    ) -> str:
+        lines = [
+            "Sanoma Pro Grading Report",
+            f"Job ID: {job_id}",
+            f"Status: {'interrupted' if interrupted else final_status}",
+            f"Summary: {summary or '-'}",
+            "",
+        ]
+        if not entries:
+            lines.append("No exercise evaluations were recorded before the run stopped.")
+            return "\n".join(lines).rstrip() + "\n"
+
+        grouped_entries: dict[str, list[SanomaGradingReportEntry]] = {}
+        for entry in entries:
+            student_key = entry.student_name or "Unknown student"
+            grouped_entries.setdefault(student_key, []).append(entry)
+
+        for student_name, student_entries in grouped_entries.items():
+            student_progress = next((entry.student_progress for entry in student_entries if entry.student_progress), None)
+            header = f"Student: {student_name}"
+            if student_progress:
+                header += f" ({student_progress})"
+            lines.extend([header, "=" * len(header)])
+            for entry in student_entries:
+                lines.extend(
+                    [
+                        f"Exercise: {entry.exercise_label or '-'}",
+                        f"Status: {entry.status}",
+                        f"Link: {entry.exercise_url or '-'}",
+                        f"Question: {entry.question_text or '-'}",
+                        f"Answer: {entry.answer_text or '-'}",
+                        f"Model Answer: {entry.model_answer_text or '-'}",
+                        f"Points: {entry.points_text or '-'}",
+                        "Points basis:",
+                    ]
+                )
+                lines.extend(f"- {line}" for line in entry.basis_lines)
+                lines.append("")
+            lines.append("")
+
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _write_sanomapro_grading_report(
+        self,
+        *,
+        job_id: str,
+        final_status: str,
+        summary: str,
+        entries: list[SanomaGradingReportEntry],
+        interrupted: bool = False,
+    ) -> Path:
+        report_path = self.exam_grading_report_path(job_id)
+        report_path.write_text(
+            self._render_sanomapro_grading_report(
+                job_id=job_id,
+                final_status=final_status,
+                summary=summary,
+                entries=entries,
+                interrupted=interrupted,
+            ),
+            encoding="utf-8",
+        )
+        return report_path
+
+    def _sanomapro_single_score_max(self, exercise_state: SanomaExerciseState) -> float | None:
+        if len(exercise_state.score_fields) != 1:
+            return None
+        return round(exercise_state.score_fields[0].max_score, 2)
+
+    def _sanomapro_detect_scoring_profile(self, exercise_state: SanomaExerciseState) -> str:
+        single_score_max = self._sanomapro_single_score_max(exercise_state)
+        if single_score_max is None:
+            return "multi_field_or_generic"
+        if abs(single_score_max - 2.0) <= 0.05:
+            return "single_score_max_2"
+        if abs(single_score_max - 3.0) <= 0.05:
+            return "single_score_max_3"
+        return "single_score_generic"
+
+    def _sanomapro_scoring_policy_text(self, exercise_state: SanomaExerciseState) -> str:
+        profile = self._sanomapro_detect_scoring_profile(exercise_state)
+        if profile == "single_score_max_2":
+            return (
+                "Detected from DOM: one visible overall score field with max 2 points.\n"
+                "Apply this scoring principle:\n"
+                "- Compare Oppilaan vastaus directly to Mallivastaus, but prioritize meaning over word-for-word matching.\n"
+                "- If the student's sentence means the same thing as Mallivastaus, treat it as correct even if the wording is different.\n"
+                "- Example: 'Onko mielestasi' and 'Oletko sita mielta' can be equally correct when they preserve the same meaning.\n"
+                "- If the answer is around half right, give 1/2.\n"
+                "- If there is only a small mistake such as one wrong letter or a small grammatical detail, give 1.5/2.\n"
+                "- Do not give 1/2 just because a few keywords overlap.\n"
+                "- If multiple words are incorrect, there are several typos, or the phrase structure/order is wrong, be strict: this is usually 0/2 unless about half of the meaning is still clearly correct.\n"
+                "- If neither rule fits, give 0/2.\n"
+                "- Give 2/2 only when the answer matches the model answer well enough to be fully correct."
+            )
+        if profile == "single_score_max_3":
+            return (
+                "Detected from DOM: one visible overall score field with max 3 points.\n"
+                "Apply this scoring principle:\n"
+                "- Compare Oppilaan vastaus directly to Mallivastaus, but prioritize meaning over word-for-word matching.\n"
+                "- If the student's sentence means the same thing as Mallivastaus, treat it as correct even if the wording is different.\n"
+                "- Example: 'Onko mielestasi' and 'Oletko sita mielta' can be equally correct when they preserve the same meaning.\n"
+                "- If one whole word is wrong, give 2/3.\n"
+                "- If only one letter or a small grammatical detail inside a word is wrong, give 2.5/3.\n"
+                "- If there are multiple details wrong but the main message or spirit still matches Mallivastaus, give 1/3.\n"
+                "- Do not be generous when several words are wrong, there are multiple typos, or the phrase structure/order is clearly broken.\n"
+                "- When several independent errors accumulate, prefer 1/3 or 0/3 rather than 2/3.\n"
+                "- If none of these rules fit, give 0/3.\n"
+                "- Give 3/3 only when the answer matches the model answer well enough to be fully correct."
+            )
+        if profile == "single_score_generic":
+            max_score = self._sanomapro_single_score_max(exercise_state)
+            return (
+                "Detected from DOM: one visible overall score field with a non-standard max score.\n"
+                f"- Compare Oppilaan vastaus directly to Mallivastaus and assign one score between 0 and {self._format_score_value(max_score or 0)}.\n"
+                "- Prioritize semantic equivalence over exact wording when the student's meaning is clearly the same.\n"
+                "- Be strict when several wording, typo, or phrase-structure errors accumulate.\n"
+                "- Use the visible exercise content only.\n"
+                "- Keep the score proportional to how closely the submission matches the model answer."
+            )
+        total_max = round(sum(field.max_score for field in exercise_state.score_fields), 2)
+        return (
+            "Detected from DOM: multiple visible score fields or a multi-part scoring layout.\n"
+            f"- There are {len(exercise_state.score_fields)} visible score fields with a combined max of {self._format_score_value(total_max)} points.\n"
+            "- Compare Oppilaan vastaus to Mallivastaus.\n"
+            "- Prioritize semantic equivalence over exact wording when the student's meaning is clearly the same.\n"
+            "- Be strict when several wording, typo, or phrase-structure errors accumulate.\n"
+            "- Score each visible field separately in DOM order.\n"
+            "- Do not invent extra fields and do not exceed the visible max score for any field."
+        )
+
+    async def _go_to_previous_sanomapro_student(self, page, current_url: str | None) -> bool:
+        selector = self._sanomapro_selector(current_url, "previous_student_button")
+        moved = await self._click_page_selector(page, selector)
+        if moved:
+            await asyncio.sleep(0.2)
+        return moved
+
+    async def _go_to_next_sanomapro_student(self, page, current_url: str | None) -> bool:
+        selector = self._sanomapro_selector(current_url, "next_student_button")
+        moved = await self._click_page_selector(page, selector)
+        if moved:
+            await asyncio.sleep(0.2)
+        return moved
+
+    async def _open_sanomapro_next_progress_document(
+        self,
+        page,
+        current_url: str | None,
+        exercise_state: SanomaExerciseState,
+    ) -> bool:
+        selector = self._sanomapro_selector(current_url, "document_progress_link")
+        if exercise_state.next_progress_document_selector_index is not None:
+            opened = await self._click_page_selector(
+                page,
+                selector,
+                index=exercise_state.next_progress_document_selector_index,
+            )
+            if opened:
+                await asyncio.sleep(0.25)
+                return True
+
+        fallback_selector = self._sanomapro_selector(current_url, "next_document_button")
+        opened = await self._click_page_selector(page, fallback_selector)
+        if opened:
+            await asyncio.sleep(0.25)
+        return opened
+
+    async def _rewind_sanomapro_exercise_to_first_student(
+        self,
+        page,
+        current_url: str | None,
+        exercise_state: SanomaExerciseState,
+    ) -> SanomaExerciseState:
+        current_index = exercise_state.current_student_index
+        if current_index is None or current_index <= 1 or not exercise_state.previous_student_available:
+            return exercise_state
+
+        safety_limit = max(current_index + 2, 5)
+        previous_index = current_index
+        current_state = exercise_state
+        for _ in range(safety_limit):
+            if (current_state.current_student_index or 1) <= 1:
+                return current_state
+            if not await self._go_to_previous_sanomapro_student(page, current_url):
+                return current_state
+            current_state = await self._extract_sanomapro_exercise_state(page)
+            new_index = current_state.current_student_index
+            if new_index is None or new_index >= previous_index:
+                return current_state
+            previous_index = new_index
+        return current_state
+
     async def _set_browser_status_overlay(
         self,
         page,
@@ -1345,7 +1798,6 @@ Be conservative. If uncertain, do not choose exam_grading.
                   const payload = {json.dumps(payload, ensure_ascii=False)};
                   const overlayId = '__gradeagent_status_overlay__';
                   const styleId = '__gradeagent_status_overlay_style__';
-                  const historyKey = '__gradeagent_status_overlay_history__';
 
                   if (!document.getElementById(styleId)) {{
                     const style = document.createElement('style');
@@ -1441,28 +1893,6 @@ Be conservative. If uncertain, do not choose exam_grading.
                         font-weight: 600;
                         word-break: break-word;
                       }}
-                      #${{overlayId}} .ga-activity {{
-                        margin-top: 12px;
-                        display: grid;
-                        gap: 6px;
-                      }}
-                      #${{overlayId}} .ga-activity-title {{
-                        font-size: 10px;
-                        font-weight: 700;
-                        letter-spacing: 0.05em;
-                        text-transform: uppercase;
-                        opacity: 0.72;
-                      }}
-                      #${{overlayId}} .ga-activity-item {{
-                        display: grid;
-                        grid-template-columns: 52px 1fr;
-                        gap: 8px;
-                        font-size: 12px;
-                        opacity: 0.92;
-                      }}
-                      #${{overlayId}} .ga-activity-time {{
-                        opacity: 0.65;
-                      }}
                     `;
                     (document.head || document.documentElement).appendChild(style);
                   }}
@@ -1481,23 +1911,9 @@ Be conservative. If uncertain, do not choose exam_grading.
                         <div class="ga-headline"></div>
                         <div class="ga-detail"></div>
                         <div class="ga-meta"></div>
-                        <div class="ga-activity">
-                          <div class="ga-activity-title">Recent activity</div>
-                          <div class="ga-activity-list"></div>
-                        </div>
                       </div>
                     `;
                     (document.body || document.documentElement).appendChild(root);
-                  }}
-
-                  const history = Array.isArray(window[historyKey]) ? window[historyKey] : [];
-                  if (payload.recordEvent) {{
-                    history.unshift({{
-                      timestamp: payload.timestamp,
-                      headline: payload.headline,
-                      detail: payload.detail,
-                    }});
-                    window[historyKey] = history.slice(0, 4);
                   }}
 
                   root.dataset.mode = payload.mode;
@@ -1520,20 +1936,6 @@ Be conservative. If uncertain, do not choose exam_grading.
                     valueEl.textContent = value;
                     item.append(labelEl, valueEl);
                     metaRoot.appendChild(item);
-                  }}
-
-                  const activityList = root.querySelector('.ga-activity-list');
-                  activityList.replaceChildren();
-                  for (const item of window[historyKey] || []) {{
-                    const row = document.createElement('div');
-                    row.className = 'ga-activity-item';
-                    const timeEl = document.createElement('span');
-                    timeEl.className = 'ga-activity-time';
-                    timeEl.textContent = item.timestamp;
-                    const textEl = document.createElement('span');
-                    textEl.textContent = `${{item.headline}}: ${{item.detail}}`;
-                    row.append(timeEl, textEl);
-                    activityList.appendChild(row);
                   }}
 
                   return true;
@@ -1670,10 +2072,12 @@ JSON schema instructions:
               const cellSelector = 'div.review-assignment__document[ng-click="$ctrl.gotoReview(document, student)"]';
               const scoreValueSelector = '.review-assignment__document-score';
               const cells = Array.from(document.querySelectorAll(cellSelector));
+              const reviewedCount = cells.filter((cell) => cell.classList.contains('review-assignment__document--reviewed')).length;
               const pendingCandidates = cells
                 .map((cell, selectorIndex) => {
                   const scoreText = textOf(cell.querySelector(scoreValueSelector)?.innerText || cell.innerText || '');
-                  const pending = /^-\\s*\\/\\s*\\d/.test(scoreText) || !cell.classList.contains('review-assignment__document--reviewed');
+                  const reviewed = cell.classList.contains('review-assignment__document--reviewed');
+                  const pending = /^-\\s*\\/\\s*\\d/.test(scoreText) || !reviewed;
                   return {
                     selector_index: selectorIndex,
                     score_text: scoreText,
@@ -1688,6 +2092,9 @@ JSON schema instructions:
                 route: location.pathname,
                 assignment_title: textOf(document.querySelector('h1')?.innerText || ''),
                 visible_cell_count: cells.length,
+                reviewed_cell_count: reviewedCount,
+                unreviewed_cell_count: Math.max(cells.length - reviewedCount, 0),
+                fully_reviewed: cells.length > 0 && reviewedCount === cells.length,
                 pending_candidates: pendingCandidates,
               };
             }
@@ -1701,24 +2108,122 @@ JSON schema instructions:
             """
             () => {
               const textOf = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+              const uniqueTexts = (values) => {
+                const seen = new Set();
+                const items = [];
+                for (const value of values.map(textOf).filter(Boolean)) {
+                  if (seen.has(value)) continue;
+                  seen.add(value);
+                  items.push(value);
+                }
+                return items;
+              };
               const parseMaxScore = (text) => {
                 const match = text.match(/\\/\\s*([0-9]+(?:[.,][0-9]+)?)/);
                 if (!match) return null;
                 return Number(match[1].replace(',', '.'));
+              };
+              const headingWithText = (headingText) =>
+                Array.from(document.querySelectorAll('h4')).find(
+                  (el) => textOf(el.innerText || el.textContent || '') === headingText
+                ) || null;
+              const extractSanitizedBlockText = (root) => {
+                if (!root) return '';
+                const clone = root.cloneNode(true);
+                clone.querySelectorAll('.selection-hint, .word-count, form, script, style').forEach((node) => node.remove());
+                const candidateTexts = uniqueTexts(
+                  Array.from(
+                    clone.querySelectorAll(
+                      '.richtext-display .display, .display-area .display, [eb-content-block], textarea, input[type="text"], input:not([type]), p, li'
+                    )
+                  ).map((node) => {
+                    if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
+                      return textOf(node.value || '');
+                    }
+                    return textOf(node.innerText || node.textContent || '');
+                  })
+                );
+                if (candidateTexts.length) {
+                  return candidateTexts.join('\\n');
+                }
+                return textOf(clone.innerText || clone.textContent || '');
               };
 
               const reviewContent = document.querySelector('.review-exercise-content');
               const leftColumn = reviewContent?.querySelector('.left-column') || reviewContent;
               const leftColumnText = textOf(leftColumn?.innerText || '');
               const answerHeading = 'Oppilaan vastaus';
+              const modelAnswerHeading = 'Mallivastaus';
               const answerSplit = leftColumnText.split(answerHeading);
-              const questionText = answerSplit.length > 1 ? textOf(answerSplit[0]) : leftColumnText;
-              const answerText = answerSplit.length > 1 ? textOf(answerSplit.slice(1).join(answerHeading)) : '';
+              const fallbackQuestionText = answerSplit.length > 1 ? textOf(answerSplit[0]) : leftColumnText;
+              const answerSection = answerSplit.length > 1 ? textOf(answerSplit.slice(1).join(answerHeading)) : '';
+              const modelAnswerSplit = answerSection.split(modelAnswerHeading);
+              const fallbackAnswerText = modelAnswerSplit.length > 1 ? textOf(modelAnswerSplit[0]) : answerSection;
+              const fallbackModelAnswerText = modelAnswerSplit.length > 1
+                ? textOf(modelAnswerSplit.slice(1).join(modelAnswerHeading))
+                : '';
+              const questionTexts = uniqueTexts([
+                ...Array.from(
+                  document.querySelectorAll(
+                    '.review-item__intro .assessment-content .contents, .review-item__intro .assessment-content [eb-content-block]'
+                  )
+                ).map((node) => textOf(node.innerText || node.textContent || '')),
+                ...Array.from(
+                  document.querySelectorAll('.review-item .interactions-review .item-body .eb-instruction-wrapper')
+                ).map((node) => textOf(node.innerText || node.textContent || '')),
+              ]);
+              const questionText = questionTexts.length ? questionTexts.join('\\n') : fallbackQuestionText;
+              const answerBody = Array.from(document.querySelectorAll('.review-exercise-content .item-body')).find(
+                (node) => textOf(node.querySelector('h4')?.innerText || node.querySelector('h4')?.textContent || '') === answerHeading
+              ) || headingWithText(answerHeading)?.closest('.item-body');
+              const answerRoot =
+                answerBody?.querySelector('h4 + div') ||
+                answerBody?.querySelector('.richtext-display') ||
+                answerBody;
+              const answerText = extractSanitizedBlockText(answerRoot) || fallbackAnswerText;
+              const modelAnswerRoot =
+                document.querySelector('.answer-model .answer-container') ||
+                headingWithText(modelAnswerHeading)?.closest('.answer-model')?.querySelector('.answer-container') ||
+                headingWithText(modelAnswerHeading)?.parentElement?.nextElementSibling ||
+                headingWithText(modelAnswerHeading)?.nextElementSibling;
+              const modelAnswerText = extractSanitizedBlockText(modelAnswerRoot) || fallbackModelAnswerText;
               const navigationHeadings = Array.from(
                 document.querySelectorAll('.student-feedback__student-navigation h2, .student-feedback__student-navigation h1, .student-feedback__student-navigation div')
               ).map((el) => textOf(el.innerText || el.textContent || '')).filter(Boolean);
               const studentName = navigationHeadings.find((text) => text && !/^Oppilas\\s+\\d+\\/\\d+/i.test(text) && text !== 'Kirjoita palaute kokeesta') || '';
               const studentProgress = navigationHeadings.find((text) => /^Oppilas\\s+\\d+\\/\\d+/i.test(text)) || '';
+              const studentProgressMatch = studentProgress.match(/Oppilas\\s+(\\d+)\\s*\\/\\s*(\\d+)/i);
+              const currentStudentIndex = studentProgressMatch ? Number(studentProgressMatch[1]) : null;
+              const studentCount = studentProgressMatch ? Number(studentProgressMatch[2]) : null;
+              const progressDocuments = Array.from(
+                document.querySelectorAll("ul.assessment-progress-section-documents.clickable.small a[ng-click='ctrl.goToDocument(document)']")
+              ).map((anchor, selectorIndex) => {
+                const activity = anchor.closest('.assessment-progress-activity');
+                const section = anchor.closest('.assessment-progress-section');
+                const sectionName = textOf(section?.querySelector('.assessment-progress-section-name')?.innerText || '');
+                return {
+                  selector_index: selectorIndex,
+                  section_name: sectionName,
+                  label: textOf(anchor.innerText || anchor.textContent || ''),
+                  reviewed: !!(anchor.classList.contains('reviewed') || activity?.classList.contains('reviewed')),
+                  current: !!(
+                    anchor.classList.contains('current') ||
+                    anchor.classList.contains('active') ||
+                    activity?.classList.contains('current-activity')
+                  ),
+                };
+              });
+              const currentProgressDocument =
+                progressDocuments.find((item) => item.current) ||
+                progressDocuments.find((item) => item.label && item.label === textOf(Array.from(document.querySelectorAll('span.ng-binding')).find((el) => /^\\d+$/.test(textOf(el.innerText || el.textContent || '')))?.innerText || '')) ||
+                null;
+              const currentProgressDocumentIndex = currentProgressDocument
+                ? progressDocuments.findIndex((item) => item.selector_index === currentProgressDocument.selector_index)
+                : -1;
+              const nextProgressDocument =
+                currentProgressDocumentIndex >= 0
+                  ? progressDocuments[currentProgressDocumentIndex + 1] || null
+                  : null;
               const scoreFields = Array.from(document.querySelectorAll('input.manual-score')).map((input, index) => {
                 const nearbyTexts = [
                   textOf(input.parentElement?.innerText || ''),
@@ -1742,16 +2247,36 @@ JSON schema instructions:
                   max_score: maxScore,
                 };
               });
+              const explicitExerciseLabel = textOf(
+                Array.from(document.querySelectorAll('div,span,h2,h3,h4')).find((el) =>
+                  /^Tehtävä\\s+\\d+/i.test(textOf(el.innerText || el.textContent || ''))
+                )?.innerText || ''
+              );
+              const derivedExerciseLabel = [currentProgressDocument?.section_name || '', currentProgressDocument?.label || '']
+                .filter(Boolean)
+                .join(' / ');
 
               return {
                 route: location.pathname,
                 assignment_title: textOf(document.querySelector('h1')?.innerText || ''),
                 student_name: studentName || null,
                 student_progress: studentProgress || null,
-                exercise_label: textOf(Array.from(document.querySelectorAll('div,span,h2,h3,h4')).find((el) => /^Tehtävä\\s+\\d+/i.test(textOf(el.innerText || el.textContent || '')))?.innerText || '') || null,
+                current_student_index: currentStudentIndex,
+                student_count: studentCount,
+                exercise_label: explicitExerciseLabel || derivedExerciseLabel || null,
+                current_section_name: currentProgressDocument?.section_name || null,
+                current_progress_document_label: currentProgressDocument?.label || null,
+                current_progress_document_selector_index: currentProgressDocument?.selector_index ?? null,
+                next_progress_document_selector_index: nextProgressDocument?.selector_index ?? null,
+                next_progress_document_label: nextProgressDocument
+                  ? [nextProgressDocument.section_name, nextProgressDocument.label].filter(Boolean).join(' / ')
+                  : null,
                 question_text: questionText,
                 answer_text: answerText,
+                model_answer_text: modelAnswerText,
                 score_fields: scoreFields,
+                progress_documents: progressDocuments,
+                previous_student_available: !!document.querySelector("button.student-feedback__student-navigation-button.left-button[ng-click='ctrl.gotoPreviousStudent()']"),
                 next_student_available: !!document.querySelector("button.student-feedback__student-navigation-button.right-button[ng-click='ctrl.gotoNextStudent()']"),
                 exit_available: !!document.querySelector("button.btn.btn-ghost[title='Poistu oppilaan vastauksista']"),
                 score_tab_available: !!document.querySelector("a[ng-click=\\"ctrl.openTab('score')\\"]"),
@@ -1828,7 +2353,7 @@ JSON schema instructions:
         )
 
         sanomapro_provider = normalize_provider(self.settings.sanomapro_exercise_grading_provider)
-        sanomapro_model = self.settings.sanomapro_exercise_grading_model.strip() or "gemini-2.5-flash-lite"
+        sanomapro_model = self.settings.sanomapro_exercise_grading_model.strip() or "gemini-3.1-pro-preview"
         if sanomapro_provider == "heuristic":
             return await self._build_sanomapro_heuristic_score_decision(
                 score_request,
@@ -1836,6 +2361,7 @@ JSON schema instructions:
             )
 
         parser = PydanticOutputParser(pydantic_object=SanomaScoreDecision)
+        scoring_policy_text = self._sanomapro_scoring_policy_text(exercise_state)
         fields_text = "\n".join(
             f"- index {field.index}: max {field.max_score}, current value '{field.current_value}', label '{field.label or field.container_text}'"
             for field in exercise_state.score_fields
@@ -1873,8 +2399,17 @@ Exercise:
 Question text:
 {exercise_state.question_text}
 
+Mallivastaus:
+{exercise_state.model_answer_text or '-'}
+
 Student answer:
 {exercise_state.answer_text}
+
+Detected scoring profile from DOM:
+{self._sanomapro_detect_scoring_profile(exercise_state)}
+
+Detected scoring policy:
+{scoring_policy_text}
 
 Visible score fields in DOM order:
 {fields_text}
@@ -1883,6 +2418,10 @@ Requirements:
 - Return one numeric score for each visible score field.
 - The `index` must match the DOM order from the list above.
 - Every `score` must be between 0 and that field's max score.
+- Treat meaning-equivalent phrasing as correct even when the wording differs.
+- Do not be generous when several independent errors accumulate across words, typos, or phrase structure.
+- The `summary` must briefly explain why those points were awarded compared to Mallivastaus.
+- Every field `rationale` must explain why that specific score was chosen.
 - Use `should_skip=true` only if the page is unsafe or the answer cannot be graded from the visible content.
 - Keep rationales short and operator-safe.
 
@@ -1981,11 +2520,18 @@ JSON schema instructions:
         filled_point_fields = 0
         last_exercise_label: str | None = None
         last_student_name: str | None = None
-        skipped_candidates: set[str] = set()
-        active_overview_candidate_key: str | None = None
         skipped_answers = 0
-        max_answers = max(1, payload.max_steps // 8)
+        skipped_existing_scores = 0
+        loop_budget = max(20, payload.max_steps)
+        loop_count = 0
+        fully_reviewed = False
+        interrupted = False
+        report_entries: list[SanomaGradingReportEntry] = []
+        report_path = self.exam_grading_report_path(job_id)
         summary = "No Sanoma Pro answers were processed."
+        final_status = "failed"
+        extracted_text: str | None = None
+        aligned_documents: set[str] = set()
         steps = [
             {
                 "name": "autonomy_selected",
@@ -1994,283 +2540,493 @@ JSON schema instructions:
             }
         ]
 
-        while processed_answers + skipped_answers < max_answers:
-            page = await browser_session.get_current_page()
-            if page is None:
-                break
-
-            page_url = await self.get_current_page_url(browser_session) or current_url
-            current_url = page_url
-            if self._is_sanomapro_review_overview_url(page_url):
-                await self._set_browser_status_overlay(
-                    page,
-                    mode="running",
-                    headline="Scanning review overview",
-                    detail="Looking for the next ungraded exercise cell in the Sanoma review matrix.",
-                    meta={
-                        "Processed": processed_answers,
-                        "Skipped": skipped_answers,
-                        "Route": "Overview",
-                    },
-                )
-                overview_state = await self._extract_sanomapro_overview_state(page)
-                candidate = next(
-                    (item for item in overview_state.pending_candidates if item.candidate_key not in skipped_candidates),
-                    None,
-                )
-                if candidate is None:
-                    summary = (
-                        f"Processed {processed_answers} answer(s); no more obvious ungraded Sanoma Pro cells remained."
-                        if processed_answers
-                        else "No obvious ungraded Sanoma Pro cells were visible on the review overview."
-                    )
-                    steps.append(
-                        {
-                            "name": "overview_scan",
-                            "status": "completed",
-                            "detail": f"Found {len(overview_state.pending_candidates)} pending candidate cell(s).",
-                        }
-                    )
+        try:
+            while loop_count < loop_budget:
+                loop_count += 1
+                page = await browser_session.get_current_page()
+                if page is None:
+                    summary = "Stopped because the managed browser no longer exposed an active page."
                     break
-                await self._set_browser_status_overlay(
-                    page,
-                    mode="running",
-                    headline="Selecting exercise",
-                    detail=f"Opening review cell {candidate.selector_index + 1} with visible score state '{candidate.score_text or '-'}'.",
-                    meta={
-                        "Processed": processed_answers,
-                        "Skipped": skipped_answers,
-                        "Pending cells": len(overview_state.pending_candidates),
-                        "Route": "Overview",
-                    },
-                )
-                if not await self._open_sanomapro_overview_candidate(page, page_url, candidate):
+
+                page_url = await self.get_current_page_url(browser_session) or current_url
+                current_url = page_url
+                if self._is_sanomapro_review_overview_url(page_url):
                     await self._set_browser_status_overlay(
                         page,
-                        mode="failed",
-                        headline="Opening exercise failed",
-                        detail="The selected review cell could not be opened from the overview grid.",
+                        mode="running",
+                        headline="Scanning review overview",
+                        detail="Checking whether all visible exercise boxes are already reviewed.",
                         meta={
-                            "Cell": candidate.selector_index + 1,
+                            "Processed": processed_answers,
+                            "Skipped": skipped_answers,
                             "Route": "Overview",
                         },
                     )
-                    return ExamSessionGradingTaskResult(
-                        job_id=job_id,
-                        status="failed",
-                        summary="Could not open the selected Sanoma Pro review cell from the overview.",
-                        agent_provider=provider,
-                        agent_model=self._resolved_browser_agent_model(),
-                        current_url=page_url,
-                        screenshot_path=str(screenshot_path),
-                        extracted_text=None,
-                        steps=[
+                    overview_state = await self._extract_sanomapro_overview_state(page)
+                    if overview_state.fully_reviewed:
+                        fully_reviewed = True
+                        summary = (
+                            f"Processed {processed_answers} answer(s); all {overview_state.visible_cell_count} visible exercise boxes were marked reviewed."
+                            if processed_answers
+                            else f"All {overview_state.visible_cell_count} visible exercise boxes were already marked reviewed."
+                        )
+                        steps.append(
+                            {
+                                "name": "overview_complete",
+                                "status": "completed",
+                                "detail": (
+                                    f"Overview matrix fully reviewed: {overview_state.reviewed_cell_count}/"
+                                    f"{overview_state.visible_cell_count} visible cells are blue/reviewed."
+                                ),
+                            }
+                        )
+                        break
+
+                    candidate = next(iter(overview_state.pending_candidates), None)
+                    if candidate is None:
+                        summary = (
+                            f"Stopped because {overview_state.unreviewed_cell_count} visible exercise box(es) were still not blue/reviewed, but no remaining candidate cell could be opened automatically."
+                        )
+                        steps.append(
+                            {
+                                "name": "overview_incomplete",
+                                "status": "failed",
+                                "detail": (
+                                    f"Overview still had {overview_state.unreviewed_cell_count} unreviewed cell(s) out of "
+                                    f"{overview_state.visible_cell_count}, but no candidate remained after filtering."
+                                ),
+                            }
+                        )
+                        break
+                    await self._set_browser_status_overlay(
+                        page,
+                        mode="running",
+                        headline="Selecting exercise",
+                        detail=(
+                            f"Opening review cell {candidate.selector_index + 1} with visible score state "
+                            f"'{candidate.score_text or '-'}' to seed exercise-page traversal."
+                        ),
+                        meta={
+                            "Processed": processed_answers,
+                            "Skipped": skipped_answers,
+                            "Pending cells": len(overview_state.pending_candidates),
+                            "Blue cells": f"{overview_state.reviewed_cell_count}/{overview_state.visible_cell_count}",
+                            "Route": "Overview",
+                        },
+                    )
+                    if not await self._open_sanomapro_overview_candidate(page, page_url, candidate):
+                        await self._set_browser_status_overlay(
+                            page,
+                            mode="failed",
+                            headline="Opening exercise failed",
+                            detail="The selected review cell could not be opened from the overview grid.",
+                            meta={
+                                "Cell": candidate.selector_index + 1,
+                                "Route": "Overview",
+                            },
+                        )
+                        summary = "Could not open the selected Sanoma Pro review cell from the overview."
+                        steps.append(
                             {
                                 "name": "overview_open",
                                 "status": "failed",
                                 "detail": f"Could not click overview candidate {candidate.candidate_key}.",
                             }
-                        ],
+                        )
+                        break
+                    steps.append(
+                        {
+                            "name": "overview_open",
+                            "status": "completed",
+                            "detail": f"Opened overview candidate {candidate.candidate_key} to start exercise traversal.",
+                        }
                     )
-                steps.append(
-                    {
-                        "name": "overview_open",
-                        "status": "completed",
-                        "detail": f"Opened pending overview candidate {candidate.candidate_key}.",
-                    }
-                )
-                active_overview_candidate_key = candidate.candidate_key
-                continue
+                    continue
 
-            if not self._is_sanomapro_review_exercise_url(page_url):
-                summary = f"Stopped because the current Sanoma Pro page was not a supported review route: {page_url}"
-                break
+                if not self._is_sanomapro_review_exercise_url(page_url):
+                    summary = f"Stopped because the current Sanoma Pro page was not a supported review route: {page_url}"
+                    break
 
-            await self._set_browser_status_overlay(
-                page,
-                mode="running",
-                headline="Preparing exercise",
-                detail="Checking that manual score inputs are visible before grading.",
-                meta={
-                    "Processed": processed_answers,
-                    "Skipped": skipped_answers,
-                    "Route": "Exercise",
-                },
-            )
-            if not await self._ensure_sanomapro_score_fields_visible(page, page_url):
                 await self._set_browser_status_overlay(
                     page,
-                    mode="failed",
-                    headline="Score fields unavailable",
-                    detail="The exercise page did not expose the manual score inputs needed for autonomy.",
+                    mode="running",
+                    headline="Preparing exercise",
+                    detail="Checking that manual score inputs are visible before grading.",
                     meta={
                         "Processed": processed_answers,
                         "Skipped": skipped_answers,
                         "Route": "Exercise",
                     },
                 )
-                return ExamSessionGradingTaskResult(
-                    job_id=job_id,
-                    status="failed",
-                    summary="Sanoma Pro exercise page did not expose visible score fields.",
-                    agent_provider=provider,
-                    agent_model=self._resolved_browser_agent_model(),
-                    current_url=page_url,
-                    screenshot_path=str(screenshot_path),
-                    extracted_text=None,
-                    steps=[
+                if not await self._ensure_sanomapro_score_fields_visible(page, page_url):
+                    await self._set_browser_status_overlay(
+                        page,
+                        mode="failed",
+                        headline="Score fields unavailable",
+                        detail="The exercise page did not expose the manual score inputs needed for autonomy.",
+                        meta={
+                            "Processed": processed_answers,
+                            "Skipped": skipped_answers,
+                            "Route": "Exercise",
+                        },
+                    )
+                    summary = "Sanoma Pro exercise page did not expose visible score fields."
+                    steps.append(
                         {
                             "name": "score_fields_check",
                             "status": "failed",
                             "detail": "Could not reveal manual score inputs on the exercise page.",
                         }
-                    ],
-                )
+                    )
+                    break
 
-            exercise_state = await self._extract_sanomapro_exercise_state(page)
-            last_exercise_label = exercise_state.exercise_label
-            last_student_name = exercise_state.student_name
-            await self._set_browser_status_overlay(
-                page,
-                mode="running",
-                headline="Grading exercise",
-                detail=(
-                    f"Evaluating {exercise_state.student_name or 'current student'} / "
-                    f"{exercise_state.exercise_label or 'current exercise'} and preparing numeric scores."
-                ),
-                meta={
-                    "Processed": processed_answers,
-                    "Skipped": skipped_answers,
-                    "Student": exercise_state.student_name or "-",
-                    "Exercise": exercise_state.exercise_label or "-",
-                },
-            )
-            decision = await self._build_sanomapro_score_decision(payload, exercise_state)
-            if decision.should_skip:
-                skipped_answers += 1
-                summary = decision.summary or "Skipped an answer that still needs teacher review."
-                await self._set_browser_status_overlay(
-                    page,
-                    mode="needs_review",
-                    headline="Teacher review needed",
-                    detail=decision.skip_reason or decision.summary or "The current exercise was left for manual review.",
-                    meta={
-                        "Processed": processed_answers,
-                        "Skipped": skipped_answers,
-                        "Student": exercise_state.student_name or "-",
-                        "Exercise": exercise_state.exercise_label or "-",
-                    },
-                )
-                steps.append(
-                    {
-                        "name": "exercise_skipped",
-                        "status": "failed",
-                        "detail": decision.skip_reason or decision.summary,
-                    }
-                )
-            else:
-                score_summary = ", ".join(
-                    f"{self._format_score_value(item.score)}/{self._format_score_value(exercise_state.score_fields[item.index].max_score)}"
-                    for item in decision.scores
-                    if item.index < len(exercise_state.score_fields)
-                )
-                await self._set_browser_status_overlay(
-                    page,
-                    mode="running",
-                    headline="Entering scores",
-                    detail=(
-                        "Dry run only. No scores will be typed."
-                        if payload.dry_run
-                        else f"Typing scores into the visible fields: {score_summary or 'no scores'}."
-                    ),
-                    meta={
-                        "Processed": processed_answers,
-                        "Skipped": skipped_answers,
-                        "Student": exercise_state.student_name or "-",
-                        "Exercise": exercise_state.exercise_label or "-",
-                    },
-                )
-                filled_point_fields += await self._apply_sanomapro_score_decision(
-                    page,
-                    page_url,
-                    exercise_state,
-                    decision,
-                    dry_run=payload.dry_run,
-                )
-                processed_answers += 1
-                summary = decision.summary
-                steps.append(
-                    {
-                        "name": "exercise_scored",
-                        "status": "completed",
-                        "detail": f"Scored {exercise_state.student_name or 'current student'} / {exercise_state.exercise_label or 'current exercise'}.",
-                    }
-                )
+                exercise_state = await self._extract_sanomapro_exercise_state(page)
+                document_key = self._sanomapro_document_key(exercise_state)
+                if document_key and document_key not in aligned_documents:
+                    aligned_documents.add(document_key)
+                    if (
+                        (exercise_state.current_student_index or 0) > 1
+                        and exercise_state.previous_student_available
+                    ):
+                        await self._set_browser_status_overlay(
+                            page,
+                            mode="running",
+                            headline="Selecting first student",
+                            detail=(
+                                f"Moving upward to Oppilas 1/{exercise_state.student_count or '?'} before grading "
+                                f"{exercise_state.current_section_name or exercise_state.exercise_label or 'the current exercise'}."
+                            ),
+                            meta={
+                                "Student": exercise_state.student_progress or "-",
+                                "Exercise": exercise_state.exercise_label or "-",
+                                "Type": exercise_state.current_section_name or "-",
+                            },
+                        )
+                        rewound_state = await self._rewind_sanomapro_exercise_to_first_student(
+                            page,
+                            page_url,
+                            exercise_state,
+                        )
+                        if rewound_state.current_student_index != exercise_state.current_student_index:
+                            exercise_state = rewound_state
+                            current_url = await self.get_current_page_url(browser_session) or current_url
+                            page_url = current_url
+                            steps.append(
+                                {
+                                    "name": "student_rewind",
+                                    "status": "completed",
+                                    "detail": (
+                                        f"Rewound {exercise_state.current_section_name or exercise_state.exercise_label or 'current exercise'} "
+                                        f"to {exercise_state.student_progress or 'the first student'}."
+                                    ),
+                                }
+                            )
 
-            returned_to_overview = False
-            if exercise_state.exit_available:
-                await self._set_browser_status_overlay(
-                    page,
-                    mode="running",
-                    headline="Returning to overview",
-                    detail="Leaving the student answer view and going back to the review matrix.",
-                    meta={
-                        "Processed": processed_answers,
-                        "Skipped": skipped_answers,
-                        "Student": exercise_state.student_name or "-",
-                        "Exercise": exercise_state.exercise_label or "-",
-                    },
-                )
-                returned_to_overview = await self._exit_sanomapro_exercise_to_overview(page, page_url)
+                last_exercise_label = exercise_state.exercise_label
+                last_student_name = exercise_state.student_name
 
-            if decision.should_skip and active_overview_candidate_key:
-                skipped_candidates.add(active_overview_candidate_key)
-            active_overview_candidate_key = None
-
-            if not returned_to_overview:
-                steps.append(
-                    {
-                        "name": "overview_return",
-                        "status": "failed",
-                        "detail": (
-                            "Stopped because the exercise page could not return to the overview after grading."
-                            if exercise_state.exit_available
-                            else "Stopped because the exercise page did not expose an overview return control."
+                if self._sanomapro_has_existing_scores(exercise_state) and not payload.dry_run:
+                    skipped_existing_scores += 1
+                    summary = (
+                        f"Skipped already scored answer for {exercise_state.student_name or 'current student'} "
+                        f"({exercise_state.student_progress or '-'}) in "
+                        f"{exercise_state.exercise_label or exercise_state.current_section_name or 'the current exercise'}."
+                    )
+                    steps.append(
+                        {
+                            "name": "exercise_already_scored",
+                            "status": "completed",
+                            "detail": summary,
+                        }
+                    )
+                else:
+                    await self._set_browser_status_overlay(
+                        page,
+                        mode="running",
+                        headline="Grading exercise",
+                        detail=f"{exercise_state.student_name or 'Current student'} · {exercise_state.exercise_label or 'Current exercise'}",
+                        meta=self._sanomapro_exercise_overlay_meta(
+                            exercise_state,
+                            points_text="Pending",
+                            reasoning_text=self._sanomapro_reasoning_overlay_text(),
                         ),
-                    }
-                )
-                summary = (
-                    f"{summary} Stopped because the exercise page could not return to the overview safely."
-                    if summary
-                    else "Stopped because the exercise page could not return to the overview safely."
-                )
+                    )
+                    decision = await self._build_sanomapro_score_decision(payload, exercise_state)
+                    report_entries.append(
+                        self._sanomapro_report_entry(
+                            exercise_state,
+                            decision,
+                            exercise_url=page_url,
+                            dry_run=payload.dry_run,
+                        )
+                    )
+                    if decision.should_skip:
+                        skipped_answers += 1
+                        summary = decision.summary or "Skipped an answer that still needs teacher review."
+                        await self._set_browser_status_overlay(
+                            page,
+                            mode="needs_review",
+                            headline="Teacher review needed",
+                            detail=f"{exercise_state.student_name or 'Current student'} · {exercise_state.exercise_label or 'Current exercise'}",
+                            meta=self._sanomapro_exercise_overlay_meta(
+                                exercise_state,
+                                points_text="Needs review",
+                                reasoning_text=self._sanomapro_reasoning_overlay_text(decision),
+                            ),
+                        )
+                        steps.append(
+                            {
+                                "name": "exercise_skipped",
+                                "status": "failed",
+                                "detail": decision.skip_reason or decision.summary,
+                            }
+                        )
+                    else:
+                        await self._set_browser_status_overlay(
+                            page,
+                            mode="running",
+                            headline="Entering scores",
+                            detail=(
+                                f"{exercise_state.student_name or 'Current student'} · "
+                                f"{exercise_state.exercise_label or 'Current exercise'}"
+                            ),
+                            meta=self._sanomapro_exercise_overlay_meta(
+                                exercise_state,
+                                points_text=(
+                                    "Dry run"
+                                    if payload.dry_run
+                                    else self._sanomapro_points_overlay_text(exercise_state, decision)
+                                ),
+                                reasoning_text=self._sanomapro_reasoning_overlay_text(decision),
+                            ),
+                        )
+                        filled_point_fields += await self._apply_sanomapro_score_decision(
+                            page,
+                            page_url,
+                            exercise_state,
+                            decision,
+                            dry_run=payload.dry_run,
+                        )
+                        processed_answers += 1
+                        summary = decision.summary
+                        steps.append(
+                            {
+                                "name": "exercise_scored",
+                                "status": "completed",
+                                "detail": (
+                                    f"Scored {exercise_state.student_name or 'current student'} / "
+                                    f"{exercise_state.exercise_label or 'current exercise'}."
+                                ),
+                            }
+                        )
+
+                at_last_student = False
+                if exercise_state.current_student_index is not None and exercise_state.student_count is not None:
+                    at_last_student = exercise_state.current_student_index >= exercise_state.student_count
+                elif not exercise_state.next_student_available:
+                    at_last_student = True
+
+                if not at_last_student and exercise_state.next_student_available:
+                    await self._set_browser_status_overlay(
+                        page,
+                        mode="running",
+                        headline="Selecting next student",
+                        detail=(
+                            f"Moving from {exercise_state.student_progress or 'current student'} to the next student "
+                            f"in {exercise_state.exercise_label or exercise_state.current_section_name or 'the current exercise'}."
+                        ),
+                        meta=self._sanomapro_exercise_overlay_meta(
+                            exercise_state,
+                            points_text=(
+                                "Existing score"
+                                if self._sanomapro_has_existing_scores(exercise_state) and not payload.dry_run
+                                else "Needs review"
+                                if "teacher review" in summary.lower()
+                                else self._sanomapro_points_overlay_text(exercise_state)
+                            ),
+                            reasoning_text=(
+                                "Score already visible in the page, so this answer is being left unchanged."
+                                if self._sanomapro_has_existing_scores(exercise_state) and not payload.dry_run
+                                else None
+                            ),
+                        ),
+                    )
+                    if not await self._go_to_next_sanomapro_student(page, page_url):
+                        steps.append(
+                            {
+                                "name": "next_student_navigation",
+                                "status": "failed",
+                                "detail": "Could not move to the next student with the green arrow button.",
+                            }
+                        )
+                        summary = (
+                            f"{summary} Stopped because the next-student arrow could not be used."
+                            if summary
+                            else "Stopped because the next-student arrow could not be used."
+                        )
+                        break
+                    steps.append(
+                        {
+                            "name": "next_student_navigation",
+                            "status": "completed",
+                            "detail": (
+                                f"Moved to the next student after {exercise_state.student_progress or 'the current student'}."
+                            ),
+                        }
+                    )
+                    continue
+
+                if at_last_student:
+                    await self._set_browser_status_overlay(
+                        page,
+                        mode="running",
+                        headline="Selecting next exercise",
+                        detail=(
+                            "Last student in the current exercise is complete. "
+                            f"Opening {exercise_state.next_progress_document_label or 'the next exercise'} from the main menu."
+                        ),
+                        meta={
+                            "Student": exercise_state.student_progress or "-",
+                            "Current exercise": exercise_state.exercise_label or "-",
+                            "Next exercise": exercise_state.next_progress_document_label or "-",
+                        },
+                    )
+                    if await self._open_sanomapro_next_progress_document(page, page_url, exercise_state):
+                        steps.append(
+                            {
+                                "name": "next_exercise_navigation",
+                                "status": "completed",
+                                "detail": (
+                                    f"Opened {exercise_state.next_progress_document_label or 'the next exercise'} "
+                                    "from the exercise menu."
+                                ),
+                            }
+                        )
+                        continue
+
+                    returned_to_overview = False
+                    if exercise_state.exit_available:
+                        await self._set_browser_status_overlay(
+                            page,
+                            mode="running",
+                            headline="Returning to overview",
+                            detail=(
+                                "No further exercise was available from the menu. "
+                                "Returning to the overview to confirm all boxes are blue."
+                            ),
+                            meta={
+                                "Student": exercise_state.student_progress or "-",
+                                "Exercise": exercise_state.exercise_label or "-",
+                            },
+                        )
+                        returned_to_overview = await self._exit_sanomapro_exercise_to_overview(page, page_url)
+                    if returned_to_overview:
+                        steps.append(
+                            {
+                                "name": "overview_return",
+                                "status": "completed",
+                                "detail": "Returned to the overview to verify final completion.",
+                            }
+                        )
+                        continue
+
+                    steps.append(
+                        {
+                            "name": "next_exercise_navigation",
+                            "status": "failed",
+                            "detail": (
+                                "Reached the last visible student, but could not open the next exercise or return to overview."
+                            ),
+                        }
+                    )
+                    summary = (
+                        f"{summary} Stopped because the next exercise could not be opened safely."
+                        if summary
+                        else "Stopped because the next exercise could not be opened safely."
+                    )
+                    break
+
                 await self._set_browser_status_overlay(
                     page,
                     mode="failed",
-                    headline="Could not return safely",
-                    detail="The current exercise page could not return to the overview, so autonomy stopped before retrying anything.",
+                    headline="Navigation state unclear",
+                    detail=(
+                        "The current exercise did not expose a safe next-student arrow or a clear last-student state."
+                    ),
                     meta={
-                        "Processed": processed_answers,
-                        "Skipped": skipped_answers,
-                        "Student": exercise_state.student_name or "-",
+                        "Student": exercise_state.student_progress or "-",
                         "Exercise": exercise_state.exercise_label or "-",
                     },
                 )
+                summary = (
+                    f"{summary} Stopped because student navigation was ambiguous on the current exercise."
+                    if summary
+                    else "Stopped because student navigation was ambiguous on the current exercise."
+                )
+                steps.append(
+                    {
+                        "name": "student_navigation_state",
+                        "status": "failed",
+                        "detail": "Could not determine whether to continue downward or switch exercises.",
+                    }
+                )
                 break
-
-        current_url, extracted_text = await self._capture_page_state(
-            browser_session,
-            current_url,
-            screenshot_path,
-        )
-        final_status = "completed" if skipped_answers == 0 else "needs_review"
-        if not processed_answers and skipped_answers:
-            final_status = "failed"
-        if skipped_answers:
+            else:
+                summary = (
+                    f"Stopped after reaching the Sanoma autonomy safety limit of {loop_budget} loop steps before the overview was fully reviewed."
+                )
+                steps.append(
+                    {
+                        "name": "safety_limit",
+                        "status": "failed",
+                        "detail": summary,
+                    }
+                )
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            interrupted = True
             summary = (
-                f"{summary} Skipped {skipped_answers} answer(s) that still need teacher review."
+                f"{summary} Grading was interrupted before the overview was fully reviewed."
                 if summary
-                else f"Skipped {skipped_answers} answer(s) that still need teacher review."
+                else "Grading was interrupted before the overview was fully reviewed."
+            )
+            raise
+        finally:
+            if interrupted:
+                final_status = "needs_review"
+            elif fully_reviewed:
+                final_status = "completed" if skipped_answers == 0 else "needs_review"
+            else:
+                final_status = (
+                    "failed"
+                    if not processed_answers and skipped_answers == 0 and skipped_existing_scores == 0
+                    else "needs_review"
+                )
+                if not summary.endswith("fully reviewed."):
+                    summary = (
+                        f"{summary} The overview was not yet fully blue/reviewed."
+                        if summary
+                        else "The overview was not yet fully blue/reviewed."
+                    )
+            if skipped_answers:
+                skipped_summary = f"Skipped {skipped_answers} answer(s) that still need teacher review."
+                if skipped_summary not in summary:
+                    summary = f"{summary} {skipped_summary}".strip() if summary else skipped_summary
+            if skipped_existing_scores:
+                existing_summary = f"Skipped {skipped_existing_scores} answer(s) that already had visible scores."
+                if existing_summary not in summary:
+                    summary = f"{summary} {existing_summary}".strip() if summary else existing_summary
+
+            current_url, extracted_text = await self._capture_page_state(
+                browser_session,
+                current_url,
+                screenshot_path,
+            )
+            report_path = self._write_sanomapro_grading_report(
+                job_id=job_id,
+                final_status=final_status if not interrupted else "needs_review",
+                summary=summary,
+                entries=report_entries,
+                interrupted=interrupted,
             )
 
         final_page = await browser_session.get_current_page()
@@ -2297,6 +3053,13 @@ JSON schema instructions:
 
         steps.append(
             {
+                "name": "report_written",
+                "status": "completed",
+                "detail": f"Saved grading report to {report_path}.",
+            }
+        )
+        steps.append(
+            {
                 "name": "artifacts_saved",
                 "status": "completed",
                 "detail": f"Saved screenshot to {screenshot_path}.",
@@ -2318,6 +3081,7 @@ JSON schema instructions:
             filled_point_fields=filled_point_fields,
             current_exercise_label=last_exercise_label,
             current_student_name=last_student_name,
+            report_path=str(report_path),
             steps=steps,
         )
 
@@ -2346,12 +3110,12 @@ Teacher grading instructions:
 {payload.instructions}
 
 Workflow:
-- Grade one vertical exercise column at a time.
-- Skip dark blue exercise boxes.
-- Open a box, read "Oppilaan vastaus", compare against "Mallivastaus" and the teacher rules.
+- Grade one exercise at a time from the current exercise page.
+- If needed, use the green student arrows to move upward until you reach the first student, then work top-to-bottom.
+- Read "Oppilaan vastaus", compare against "Mallivastaus" and the teacher rules.
 - If there is one total score, type it under "Pistemäärä".
 - Use the green rounded arrows to move to the next student in the same exercise.
-- After the whole column is done, press "Poistu oppilaan vastauksista", then start the next column.
+- When the last student in the current exercise is done, switch to the next exercise from the right-side main menu before returning to the overview.
 
 Multi-field exercises:
 - Some exercises have multiple answer fields.

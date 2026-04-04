@@ -41,6 +41,9 @@ def test_render_sanomapro_hybrid_automation_context_includes_live_review_hooks()
     assert "div.review-assignment__document[ng-click=\"$ctrl.gotoReview(document, student)\"]" in context
     assert "input.manual-score[ng-model='ctrl.score'][ng-blur='ctrl.updateScore()']" in context
     assert "ctrl.gotoNextStudent()" in context
+    assert "ctrl.gotoPreviousStudent()" in context
+    assert "h2.student-feedback__student-number" in context
+    assert "ul.assessment-progress-section-documents.clickable.small a[ng-click='ctrl.goToDocument(document)']" in context
 
 
 def test_build_exam_grading_task_includes_hybrid_automation_context_for_review_page() -> None:
