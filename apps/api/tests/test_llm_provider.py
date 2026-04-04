@@ -199,7 +199,7 @@ def test_settings_clamp_invalid_browser_history_value(monkeypatch: pytest.Monkey
 
     settings = Settings()
 
-    assert settings.browser_agent_max_history_items == 6
+    assert settings.browser_agent_max_history_items == 4
 
 
 def test_google_free_tier_remaps_pro_model_to_flash_preview() -> None:

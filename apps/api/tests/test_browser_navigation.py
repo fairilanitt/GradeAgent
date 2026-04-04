@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -9,7 +10,16 @@ from types import SimpleNamespace
 from PIL import Image
 
 from app.config import Settings
-from app.services.browser_navigation import BrowserNavigationService, VisualExamPageAssessment
+from app.schemas.api import ExamSessionGradingTaskCreate, ExamSessionGradingTaskResult
+from app.services.browser_navigation import (
+    BrowserNavigationService,
+    SanomaExerciseScoreField,
+    SanomaExerciseState,
+    SanomaOverviewState,
+    SanomaScoreDecision,
+    SanomaScoreDecisionField,
+    VisualExamPageAssessment,
+)
 
 
 class StubCDPTargetAPI:
@@ -73,6 +83,35 @@ class StubPage:
         return self.title
 
 
+class StubElement:
+    def __init__(self) -> None:
+        self.click_count = 0
+        self.filled_values: list[str] = []
+
+    async def click(self) -> None:
+        self.click_count += 1
+
+    async def fill(self, value: str) -> None:
+        self.filled_values.append(value)
+
+
+class StubInteractivePage(StubPage):
+    def __init__(self, url: str, title: str = "TEAS") -> None:
+        super().__init__(url=url, title=title)
+        self.evaluate_result = {}
+        self.elements_by_selector: dict[str, list[StubElement]] = {}
+
+    async def evaluate(self, script: str) -> str:
+        if "document.body" in script and "innerText" in script:
+            return "Oppilaan vastaus\nTest answer"
+        if isinstance(self.evaluate_result, str):
+            return self.evaluate_result
+        return json.dumps(self.evaluate_result)
+
+    async def get_elements_by_css_selector(self, selector: str) -> list[StubElement]:
+        return list(self.elements_by_selector.get(selector, []))
+
+
 class StubBrowserSession:
     def __init__(self) -> None:
         self.screenshot_path: Path | None = None
@@ -107,6 +146,19 @@ class StubBrowserSession:
     async def navigate_to(self, url: str, new_tab: bool = False) -> None:
         assert new_tab is False
         self.navigated_to = url
+
+
+class StubInteractiveBrowserSession(StubBrowserSession):
+    def __init__(self, page: StubInteractivePage) -> None:
+        super().__init__()
+        self.page = page
+        self.current_page_url = page.url
+        self.current_page_title = page.title
+
+    async def get_current_page(self) -> StubInteractivePage:
+        self.page.url = self.current_page_url
+        self.page.title = self.current_page_title
+        return self.page
 
 
 class StubBrowserSessionWithTabs:
@@ -432,6 +484,15 @@ def test_capture_page_state_saves_screenshot_and_extracts_text(tmp_path) -> None
     assert screenshot_path.exists()
 
 
+def test_agent_kwargs_normalize_small_history_to_browser_use_minimum() -> None:
+    service = BrowserNavigationService(
+        Settings().model_copy(update={"browser_agent_max_history_items": 3})
+    )
+
+    assert service._resolved_max_history_items() == 6
+    assert service._agent_kwargs()["max_history_items"] == 6
+
+
 def test_downscale_visual_image_bytes_limits_max_side() -> None:
     service = BrowserNavigationService(Settings().model_copy(update={"browser_visual_max_image_side": 512}))
     image = Image.new("RGB", (1600, 900), color="white")
@@ -654,3 +715,99 @@ def test_cleanup_agent_runtime_dir_removes_browser_use_agent_directory(tmp_path)
     assert cleanup_result["removed_paths"] == 1
     assert cleanup_result["removed_bytes"] > 0
     assert not agent_dir.exists()
+
+
+def test_extract_sanomapro_overview_state_parses_pending_candidates() -> None:
+    service = BrowserNavigationService(Settings())
+    page = StubInteractivePage("https://arvi.sanomapro.fi/as/teacher/assignment/demo/review")
+    page.evaluate_result = {
+        "route": "/as/teacher/assignment/demo/review",
+        "assignment_title": "Demo exam",
+        "visible_cell_count": 2,
+        "pending_candidates": [
+            {"selector_index": 1, "score_text": "- / 4", "candidate_key": "1:- / 4"},
+        ],
+    }
+
+    state = asyncio.run(service._extract_sanomapro_overview_state(page))
+
+    assert isinstance(state, SanomaOverviewState)
+    assert state.assignment_title == "Demo exam"
+    assert state.visible_cell_count == 2
+    assert state.pending_candidates[0].selector_index == 1
+
+
+def test_apply_sanomapro_score_decision_fills_manual_score_inputs() -> None:
+    service = BrowserNavigationService(Settings())
+    page = StubInteractivePage("https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise")
+    score_element = StubElement()
+    page.elements_by_selector[
+        "input.manual-score[ng-model='ctrl.score'][ng-blur='ctrl.updateScore()']"
+    ] = [score_element]
+    exercise_state = SanomaExerciseState(
+        route=page.url,
+        score_fields=[SanomaExerciseScoreField(index=0, max_score=4, container_text="Pistemäärä / 4 pistettä")],
+    )
+    decision = SanomaScoreDecision(
+        summary="Enter 2 points.",
+        confidence=0.95,
+        scores=[SanomaScoreDecisionField(index=0, score=2, rationale="Matches two correct answers.")],
+    )
+
+    filled = asyncio.run(
+        service._apply_sanomapro_score_decision(
+            page,
+            page.url,
+            exercise_state,
+            decision,
+            dry_run=False,
+        )
+    )
+
+    assert filled == 1
+    assert score_element.filled_values == ["2"]
+
+
+def test_grade_exam_from_current_page_uses_sanomapro_autonomy(monkeypatch, tmp_path) -> None:
+    service = BrowserNavigationService(Settings())
+    page = StubInteractivePage("https://arvi.sanomapro.fi/as/teacher/assignment/demo/review")
+    session = StubInteractiveBrowserSession(page)
+    expected_result = ExamSessionGradingTaskResult(
+        job_id="job-1",
+        status="completed",
+        summary="Deterministic autonomy finished.",
+        agent_provider="ollama",
+        agent_model="qwen3.5:9b",
+        current_url=page.url,
+        screenshot_path=str(tmp_path / "result.png"),
+        extracted_text="Oppilaan vastaus",
+        processed_answers=1,
+        filled_point_fields=1,
+        current_exercise_label="Tehtävä 1",
+        current_student_name="Eetu Ahola",
+    )
+
+    monkeypatch.setattr("app.services.browser_navigation.build_browser_use_llm", lambda settings: object())
+
+    async def fake_wait_for_ready(browser_session, timeout_seconds=12.0):
+        return True
+
+    async def fake_run_autonomy(payload, job_id, browser_session, *, current_url, provider, screenshot_path):
+        return expected_result
+
+    async def fake_current_page_url(browser_session):
+        return page.url
+
+    monkeypatch.setattr(service, "_wait_for_exam_page_ready", fake_wait_for_ready)
+    monkeypatch.setattr(service, "_run_sanomapro_autonomous_exam_flow", fake_run_autonomy)
+    monkeypatch.setattr(service, "get_current_page_url", fake_current_page_url)
+
+    result = asyncio.run(
+        service.grade_exam_from_current_page(
+            ExamSessionGradingTaskCreate(instructions="Score the answer."),
+            "job-1",
+            browser_session=session,
+        )
+    )
+
+    assert result is expected_result

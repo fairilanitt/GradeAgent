@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import asyncio
 import io
+import json
 import platform
 import shutil
 import tempfile
@@ -14,6 +15,8 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import PydanticOutputParser
 from ollama import AsyncClient as OllamaAsyncClient
 from pydantic import BaseModel, Field
 from browser_use import Agent, BrowserSession
@@ -24,6 +27,7 @@ from app.config import Settings, get_settings
 from app.schemas.api import (
     BrowserTaskCreate,
     BrowserTaskResult,
+    CriterionDefinition,
     ExamSessionGradingAgentOutput,
     ExamSessionGradingTaskCreate,
     ExamSessionGradingTaskResult,
@@ -34,12 +38,19 @@ from app.schemas.api import (
 from app.services.llm_provider import (
     ProviderConfigurationError,
     browser_model_supports_vision,
+    build_grading_chat_model,
     build_browser_use_llm,
     extract_json_object,
+    flatten_llm_content,
     normalize_provider,
     resolve_browser_model_name,
 )
 from app.services.mlx_vlm_visual import MLXVLMUnavailableError, MLXVLMVisualClient
+from app.services.hybrid_automation_profiles import (
+    render_sanomapro_hybrid_automation_context,
+    sanomapro_selector,
+)
+from app.services.model_router import GradeRequest, HeuristicModelRouter, resolve_routing_decision
 
 
 class VisualExamPageAssessment(BaseModel):
@@ -48,6 +59,56 @@ class VisualExamPageAssessment(BaseModel):
     page_ready: bool = False
     reason: str = ""
     visible_signals: list[str] = Field(default_factory=list)
+
+
+class SanomaOverviewCandidate(BaseModel):
+    selector_index: int = Field(ge=0)
+    score_text: str = ""
+    candidate_key: str = ""
+
+
+class SanomaOverviewState(BaseModel):
+    route: str = ""
+    assignment_title: str = ""
+    visible_cell_count: int = Field(default=0, ge=0)
+    pending_candidates: list[SanomaOverviewCandidate] = Field(default_factory=list)
+
+
+class SanomaExerciseScoreField(BaseModel):
+    index: int = Field(ge=0)
+    label: str = ""
+    current_value: str = ""
+    container_text: str = ""
+    max_score: float = Field(default=0, ge=0)
+
+
+class SanomaExerciseState(BaseModel):
+    route: str = ""
+    assignment_title: str = ""
+    student_name: str | None = None
+    student_progress: str | None = None
+    exercise_label: str | None = None
+    question_text: str = ""
+    answer_text: str = ""
+    score_fields: list[SanomaExerciseScoreField] = Field(default_factory=list)
+    next_student_available: bool = False
+    exit_available: bool = False
+    score_tab_available: bool = False
+    comments_tab_available: bool = False
+
+
+class SanomaScoreDecisionField(BaseModel):
+    index: int = Field(ge=0)
+    score: float = Field(ge=0)
+    rationale: str = ""
+
+
+class SanomaScoreDecision(BaseModel):
+    summary: str
+    confidence: float = Field(default=0, ge=0, le=1)
+    should_skip: bool = False
+    skip_reason: str = ""
+    scores: list[SanomaScoreDecisionField] = Field(default_factory=list)
 
 
 class BrowserNavigationService:
@@ -120,6 +181,16 @@ class BrowserNavigationService:
     def _agent_include_attributes(self) -> list[str]:
         return ["aria-label", "placeholder"]
 
+    def _resolved_max_history_items(self) -> int | None:
+        history_items = self.settings.browser_agent_max_history_items
+        if history_items is None:
+            return None
+        if history_items <= 5:
+            # browser-use rejects bounded history values <= 5, so 6 is the
+            # smallest supported setting that still limits prompt growth.
+            return 6
+        return history_items
+
     def _agent_kwargs(self) -> dict:
         return {
             "use_vision": self._browser_model_supports_vision(),
@@ -127,7 +198,7 @@ class BrowserNavigationService:
             "max_actions_per_step": self.settings.browser_agent_max_actions_per_step,
             "use_thinking": self.settings.browser_agent_use_thinking,
             "flash_mode": self.settings.browser_agent_flash_mode,
-            "max_history_items": self.settings.browser_agent_max_history_items,
+            "max_history_items": self._resolved_max_history_items(),
             "vision_detail_level": self.settings.browser_agent_vision_detail_level,
             "llm_timeout": self.settings.browser_agent_llm_timeout_seconds,
         }
@@ -345,8 +416,6 @@ class BrowserNavigationService:
             return "mlx_vlm"
         if backend == "ollama":
             return "ollama"
-        if platform.system() == "Darwin" and MLXVLMVisualClient.is_available():
-            return "mlx_vlm"
         return "ollama"
 
     def resolved_visual_backend_label(self) -> str:
@@ -648,22 +717,6 @@ Be conservative. If uncertain, do not choose exam_grading.
         *,
         timeout_seconds: float = 12.0,
     ) -> bool:
-        if self._resolved_visual_backend() is not None:
-            deadline = time.monotonic() + timeout_seconds
-            saw_visual_assessment = False
-            while time.monotonic() < deadline:
-                assessment = await self._assess_current_page_visually(
-                    browser_session,
-                )
-                if assessment is None:
-                    break
-                saw_visual_assessment = True
-                if assessment is not None and assessment.page_kind == "exam_grading" and assessment.page_ready:
-                    return True
-                await asyncio.sleep(0.6)
-            if saw_visual_assessment:
-                return False
-
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             try:
@@ -1178,7 +1231,593 @@ Be conservative. If uncertain, do not choose exam_grading.
 
         return await self._focus_best_available_page(browser_session)
 
-    def build_exam_grading_task(self, payload: ExamSessionGradingTaskCreate) -> str:
+    def _hybrid_automation_prompt_context(self, url: str | None) -> str:
+        context = render_sanomapro_hybrid_automation_context(url)
+        if not context:
+            return ""
+        return (
+            "Hardcoded Hybrid Automation anchors:\n"
+            f"{context}"
+        )
+
+    def _sanomapro_selector(self, url: str | None, key: str) -> str:
+        selector = sanomapro_selector(url, key)
+        if not selector:
+            raise ValueError(f"Missing Sanoma Pro selector for key '{key}'.")
+        return selector
+
+    def _is_sanomapro_review_overview_url(self, url: str | None) -> bool:
+        normalized_url = (url or "").strip().lower()
+        return "/as/teacher/assignment/" in normalized_url and "/review" in normalized_url
+
+    def _is_sanomapro_review_exercise_url(self, url: str | None) -> bool:
+        normalized_url = (url or "").strip().lower()
+        return "/as/teacher/review/" in normalized_url and "/exercise" in normalized_url
+
+    def _coerce_page_evaluate_result(self, raw_result):
+        if isinstance(raw_result, (dict, list, int, float, bool)) or raw_result is None:
+            return raw_result
+        if not isinstance(raw_result, str):
+            return raw_result
+
+        stripped = raw_result.strip()
+        if not stripped:
+            return ""
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return raw_result
+
+    async def _evaluate_page_json(self, page, script: str, model_type):
+        raw_result = await page.evaluate(script)
+        parsed = self._coerce_page_evaluate_result(raw_result)
+        return model_type.model_validate(parsed)
+
+    async def _page_elements_by_selector(self, page, selector: str) -> list:
+        getter = getattr(page, "get_elements_by_css_selector", None)
+        if callable(getter):
+            try:
+                return list(await getter(selector))
+            except Exception:
+                return []
+        return []
+
+    async def _click_page_selector(self, page, selector: str, *, index: int = 0) -> bool:
+        elements = await self._page_elements_by_selector(page, selector)
+        if index >= len(elements):
+            return False
+        click = getattr(elements[index], "click", None)
+        if not callable(click):
+            return False
+        await click()
+        return True
+
+    async def _fill_page_selector(self, page, selector: str, value: str, *, index: int = 0) -> bool:
+        elements = await self._page_elements_by_selector(page, selector)
+        if index >= len(elements):
+            return False
+        fill = getattr(elements[index], "fill", None)
+        if not callable(fill):
+            return False
+        await fill(value)
+        return True
+
+    def _format_score_value(self, score: float) -> str:
+        rounded = round(score, 2)
+        if rounded.is_integer():
+            return str(int(rounded))
+        return f"{rounded:.2f}".rstrip("0").rstrip(".")
+
+    async def _extract_sanomapro_overview_state(self, page) -> SanomaOverviewState:
+        return await self._evaluate_page_json(
+            page,
+            """
+            () => {
+              const textOf = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+              const cellSelector = 'div.review-assignment__document[ng-click="$ctrl.gotoReview(document, student)"]';
+              const scoreValueSelector = '.review-assignment__document-score';
+              const cells = Array.from(document.querySelectorAll(cellSelector));
+              const pendingCandidates = cells
+                .map((cell, selectorIndex) => {
+                  const scoreText = textOf(cell.querySelector(scoreValueSelector)?.innerText || cell.innerText || '');
+                  const pending = /^-\\s*\\/\\s*\\d/.test(scoreText) || !cell.classList.contains('review-assignment__document--reviewed');
+                  return {
+                    selector_index: selectorIndex,
+                    score_text: scoreText,
+                    candidate_key: `${selectorIndex}:${scoreText}`,
+                    pending,
+                  };
+                })
+                .filter((item) => item.pending)
+                .map(({ pending, ...item }) => item);
+
+              return {
+                route: location.pathname,
+                assignment_title: textOf(document.querySelector('h1')?.innerText || ''),
+                visible_cell_count: cells.length,
+                pending_candidates: pendingCandidates,
+              };
+            }
+            """,
+            SanomaOverviewState,
+        )
+
+    async def _extract_sanomapro_exercise_state(self, page) -> SanomaExerciseState:
+        return await self._evaluate_page_json(
+            page,
+            """
+            () => {
+              const textOf = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+              const parseMaxScore = (text) => {
+                const match = text.match(/\\/\\s*([0-9]+(?:[.,][0-9]+)?)/);
+                if (!match) return null;
+                return Number(match[1].replace(',', '.'));
+              };
+
+              const reviewContent = document.querySelector('.review-exercise-content');
+              const leftColumn = reviewContent?.querySelector('.left-column') || reviewContent;
+              const leftColumnText = textOf(leftColumn?.innerText || '');
+              const answerHeading = 'Oppilaan vastaus';
+              const answerSplit = leftColumnText.split(answerHeading);
+              const questionText = answerSplit.length > 1 ? textOf(answerSplit[0]) : leftColumnText;
+              const answerText = answerSplit.length > 1 ? textOf(answerSplit.slice(1).join(answerHeading)) : '';
+              const navigationHeadings = Array.from(
+                document.querySelectorAll('.student-feedback__student-navigation h2, .student-feedback__student-navigation h1, .student-feedback__student-navigation div')
+              ).map((el) => textOf(el.innerText || el.textContent || '')).filter(Boolean);
+              const studentName = navigationHeadings.find((text) => text && !/^Oppilas\\s+\\d+\\/\\d+/i.test(text) && text !== 'Kirjoita palaute kokeesta') || '';
+              const studentProgress = navigationHeadings.find((text) => /^Oppilas\\s+\\d+\\/\\d+/i.test(text)) || '';
+              const scoreFields = Array.from(document.querySelectorAll('input.manual-score')).map((input, index) => {
+                const nearbyTexts = [
+                  textOf(input.parentElement?.innerText || ''),
+                  textOf(input.parentElement?.parentElement?.innerText || ''),
+                  textOf(input.closest('.tab-panel')?.querySelector('.tab-panel-content, .tab-panel')?.innerText || ''),
+                ].filter(Boolean);
+                const containerText = nearbyTexts[0] || '';
+                let maxScore = 0;
+                for (const text of nearbyTexts) {
+                  const parsed = parseMaxScore(text);
+                  if (parsed !== null && !Number.isNaN(parsed)) {
+                    maxScore = parsed;
+                    break;
+                  }
+                }
+                return {
+                  index,
+                  label: containerText,
+                  current_value: textOf(input.value || ''),
+                  container_text: containerText,
+                  max_score: maxScore,
+                };
+              });
+
+              return {
+                route: location.pathname,
+                assignment_title: textOf(document.querySelector('h1')?.innerText || ''),
+                student_name: studentName || null,
+                student_progress: studentProgress || null,
+                exercise_label: textOf(Array.from(document.querySelectorAll('div,span,h2,h3,h4')).find((el) => /^Tehtävä\\s+\\d+/i.test(textOf(el.innerText || el.textContent || '')))?.innerText || '') || null,
+                question_text: questionText,
+                answer_text: answerText,
+                score_fields: scoreFields,
+                next_student_available: !!document.querySelector("button.student-feedback__student-navigation-button.right-button[ng-click='ctrl.gotoNextStudent()']"),
+                exit_available: !!document.querySelector("button.btn.btn-ghost[title='Poistu oppilaan vastauksista']"),
+                score_tab_available: !!document.querySelector("a[ng-click=\\"ctrl.openTab('score')\\"]"),
+                comments_tab_available: !!document.querySelector("a[ng-click=\\"ctrl.openTab('annotations')\\"]"),
+              };
+            }
+            """,
+            SanomaExerciseState,
+        )
+
+    async def _ensure_sanomapro_score_fields_visible(self, page, current_url: str | None) -> bool:
+        score_selector = self._sanomapro_selector(current_url, "manual_score_input")
+        if await self._page_elements_by_selector(page, score_selector):
+            return True
+
+        score_tab_selector = self._sanomapro_selector(current_url, "score_tab")
+        if not await self._click_page_selector(page, score_tab_selector):
+            return False
+        await asyncio.sleep(0.15)
+        return bool(await self._page_elements_by_selector(page, score_selector))
+
+    async def _open_sanomapro_overview_candidate(
+        self,
+        page,
+        current_url: str | None,
+        candidate: SanomaOverviewCandidate,
+    ) -> bool:
+        selector = self._sanomapro_selector(current_url, "review_score_cell")
+        opened = await self._click_page_selector(page, selector, index=candidate.selector_index)
+        if opened:
+            await asyncio.sleep(0.2)
+        return opened
+
+    async def _build_sanomapro_score_decision(
+        self,
+        payload: ExamSessionGradingTaskCreate,
+        exercise_state: SanomaExerciseState,
+    ) -> SanomaScoreDecision:
+        if not exercise_state.score_fields:
+            return SanomaScoreDecision(
+                summary="No score fields were visible on the current exercise page.",
+                confidence=0,
+                should_skip=True,
+                skip_reason="missing_score_fields",
+            )
+
+        criteria = [
+            CriterionDefinition(
+                id=f"field_{field.index + 1}",
+                label=field.label or f"Score field {field.index + 1}",
+                description=(
+                    f"Assign a numeric score for DOM score field {field.index + 1}. "
+                    f"Visible field context: {field.container_text or exercise_state.exercise_label or 'current exercise'}"
+                ),
+                max_score=max(field.max_score, 0.01),
+                weight=1.0,
+            )
+            for field in exercise_state.score_fields
+        ]
+        score_request = GradeRequest(
+            assessment_title=exercise_state.assignment_title or "Sanoma Pro exam review",
+            task_type="exam_review",
+            is_exam=True,
+            answer_text="\n\n".join(part for part in (exercise_state.question_text, exercise_state.answer_text) if part.strip()),
+            language="sv",
+            criteria=criteria,
+            preferences={
+                "tone": "supportive",
+                "strictness": "balanced",
+                "feedback_language": "sv",
+                "grading_guidance": payload.instructions,
+            },
+            exemplars=[],
+        )
+        routing_decision = resolve_routing_decision(self.settings, score_request)
+        if routing_decision.provider == "heuristic":
+            heuristic_result = await HeuristicModelRouter(self.settings).grade(score_request, routing_decision)
+            return SanomaScoreDecision(
+                summary=heuristic_result.feedback,
+                confidence=heuristic_result.confidence,
+                scores=[
+                    SanomaScoreDecisionField(
+                        index=index,
+                        score=min(max(round(item.score, 2), 0), criteria[index].max_score),
+                        rationale=item.rationale,
+                    )
+                    for index, item in enumerate(heuristic_result.criterion_scores[: len(criteria)])
+                ],
+            )
+
+        parser = PydanticOutputParser(pydantic_object=SanomaScoreDecision)
+        fields_text = "\n".join(
+            f"- index {field.index}: max {field.max_score}, current value '{field.current_value}', label '{field.label or field.container_text}'"
+            for field in exercise_state.score_fields
+        )
+        model = build_grading_chat_model(self.settings, routing_decision.routing_tier)
+        response = await model.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You are a deterministic Sanoma Pro exam grading engine. "
+                        "Read the visible exercise content and return bounded numeric scores for the visible score fields only. "
+                        "Never invent extra fields. Never exceed the provided max scores. Return JSON only."
+                    )
+                ),
+                HumanMessage(
+                    content=f"""
+Teacher grading instructions:
+{payload.instructions}
+
+Assignment:
+{exercise_state.assignment_title}
+
+Student:
+{exercise_state.student_name or '-'} ({exercise_state.student_progress or '-'})
+
+Exercise:
+{exercise_state.exercise_label or '-'}
+
+Question text:
+{exercise_state.question_text}
+
+Student answer:
+{exercise_state.answer_text}
+
+Visible score fields in DOM order:
+{fields_text}
+
+Requirements:
+- Return one numeric score for each visible score field.
+- The `index` must match the DOM order from the list above.
+- Every `score` must be between 0 and that field's max score.
+- Use `should_skip=true` only if the page is unsafe or the answer cannot be graded from the visible content.
+- Keep rationales short and operator-safe.
+
+JSON schema instructions:
+{parser.get_format_instructions()}
+""".strip()
+                ),
+            ]
+        )
+        text = flatten_llm_content(response.content)
+        try:
+            decision = parser.parse(text)
+        except Exception:
+            decision = SanomaScoreDecision.model_validate_json(extract_json_object(text))
+
+        bounded_scores: list[SanomaScoreDecisionField] = []
+        max_scores = {field.index: field.max_score for field in exercise_state.score_fields}
+        for field_decision in decision.scores:
+            max_score = max_scores.get(field_decision.index)
+            if max_score is None:
+                continue
+            bounded_scores.append(
+                SanomaScoreDecisionField(
+                    index=field_decision.index,
+                    score=min(max(round(field_decision.score, 2), 0), max_score),
+                    rationale=field_decision.rationale,
+                )
+            )
+        decision.scores = bounded_scores
+        if not decision.scores and not decision.should_skip:
+            decision.should_skip = True
+            decision.skip_reason = "missing_score_output"
+        return decision
+
+    async def _apply_sanomapro_score_decision(
+        self,
+        page,
+        current_url: str | None,
+        exercise_state: SanomaExerciseState,
+        decision: SanomaScoreDecision,
+        *,
+        dry_run: bool,
+    ) -> int:
+        if dry_run:
+            return 0
+
+        selector = self._sanomapro_selector(current_url, "manual_score_input")
+        if len(decision.scores) != len(exercise_state.score_fields):
+            raise RuntimeError(
+                f"Model returned {len(decision.scores)} score(s) for {len(exercise_state.score_fields)} visible field(s)."
+            )
+
+        fields_by_index = {field.index: field for field in exercise_state.score_fields}
+        filled_fields = 0
+        for field_decision in sorted(decision.scores, key=lambda item: item.index):
+            field = fields_by_index.get(field_decision.index)
+            if field is None:
+                raise RuntimeError(f"Received a score for unknown field index {field_decision.index}.")
+            if not await self._fill_page_selector(
+                page,
+                selector,
+                self._format_score_value(field_decision.score),
+                index=field_decision.index,
+            ):
+                raise RuntimeError(f"Could not fill Sanoma score field at index {field_decision.index}.")
+            filled_fields += 1
+            await asyncio.sleep(0.05)
+        return filled_fields
+
+    async def _exit_sanomapro_exercise_to_overview(self, page, current_url: str | None) -> bool:
+        selector = self._sanomapro_selector(current_url, "exit_student_answers_button")
+        exited = await self._click_page_selector(page, selector)
+        if exited:
+            await asyncio.sleep(0.2)
+        return exited
+
+    async def _run_sanomapro_autonomous_exam_flow(
+        self,
+        payload: ExamSessionGradingTaskCreate,
+        job_id: str,
+        browser_session: BrowserSession,
+        *,
+        current_url: str,
+        provider: str,
+        screenshot_path: Path,
+    ) -> ExamSessionGradingTaskResult:
+        processed_answers = 0
+        filled_point_fields = 0
+        last_exercise_label: str | None = None
+        last_student_name: str | None = None
+        skipped_candidates: set[str] = set()
+        active_overview_candidate_key: str | None = None
+        skipped_answers = 0
+        max_answers = max(1, payload.max_steps // 8)
+        summary = "No Sanoma Pro answers were processed."
+        steps = [
+            {
+                "name": "autonomy_selected",
+                "status": "completed",
+                "detail": "Using deterministic Sanoma Pro Hybrid Automation.",
+            }
+        ]
+
+        while processed_answers + skipped_answers < max_answers:
+            page = await browser_session.get_current_page()
+            if page is None:
+                break
+
+            page_url = await self.get_current_page_url(browser_session) or current_url
+            current_url = page_url
+            if self._is_sanomapro_review_overview_url(page_url):
+                overview_state = await self._extract_sanomapro_overview_state(page)
+                candidate = next(
+                    (item for item in overview_state.pending_candidates if item.candidate_key not in skipped_candidates),
+                    None,
+                )
+                if candidate is None:
+                    summary = (
+                        f"Processed {processed_answers} answer(s); no more obvious ungraded Sanoma Pro cells remained."
+                        if processed_answers
+                        else "No obvious ungraded Sanoma Pro cells were visible on the review overview."
+                    )
+                    steps.append(
+                        {
+                            "name": "overview_scan",
+                            "status": "completed",
+                            "detail": f"Found {len(overview_state.pending_candidates)} pending candidate cell(s).",
+                        }
+                    )
+                    break
+                if not await self._open_sanomapro_overview_candidate(page, page_url, candidate):
+                    return ExamSessionGradingTaskResult(
+                        job_id=job_id,
+                        status="failed",
+                        summary="Could not open the selected Sanoma Pro review cell from the overview.",
+                        agent_provider=provider,
+                        agent_model=self._resolved_browser_agent_model(),
+                        current_url=page_url,
+                        screenshot_path=str(screenshot_path),
+                        extracted_text=None,
+                        steps=[
+                            {
+                                "name": "overview_open",
+                                "status": "failed",
+                                "detail": f"Could not click overview candidate {candidate.candidate_key}.",
+                            }
+                        ],
+                    )
+                steps.append(
+                    {
+                        "name": "overview_open",
+                        "status": "completed",
+                        "detail": f"Opened pending overview candidate {candidate.candidate_key}.",
+                    }
+                )
+                active_overview_candidate_key = candidate.candidate_key
+                continue
+
+            if not self._is_sanomapro_review_exercise_url(page_url):
+                summary = f"Stopped because the current Sanoma Pro page was not a supported review route: {page_url}"
+                break
+
+            if not await self._ensure_sanomapro_score_fields_visible(page, page_url):
+                return ExamSessionGradingTaskResult(
+                    job_id=job_id,
+                    status="failed",
+                    summary="Sanoma Pro exercise page did not expose visible score fields.",
+                    agent_provider=provider,
+                    agent_model=self._resolved_browser_agent_model(),
+                    current_url=page_url,
+                    screenshot_path=str(screenshot_path),
+                    extracted_text=None,
+                    steps=[
+                        {
+                            "name": "score_fields_check",
+                            "status": "failed",
+                            "detail": "Could not reveal manual score inputs on the exercise page.",
+                        }
+                    ],
+                )
+
+            exercise_state = await self._extract_sanomapro_exercise_state(page)
+            last_exercise_label = exercise_state.exercise_label
+            last_student_name = exercise_state.student_name
+            decision = await self._build_sanomapro_score_decision(payload, exercise_state)
+            if decision.should_skip:
+                skipped_answers += 1
+                summary = decision.summary or "Skipped an answer that still needs teacher review."
+                steps.append(
+                    {
+                        "name": "exercise_skipped",
+                        "status": "failed",
+                        "detail": decision.skip_reason or decision.summary,
+                    }
+                )
+            else:
+                filled_point_fields += await self._apply_sanomapro_score_decision(
+                    page,
+                    page_url,
+                    exercise_state,
+                    decision,
+                    dry_run=payload.dry_run,
+                )
+                processed_answers += 1
+                summary = decision.summary
+                steps.append(
+                    {
+                        "name": "exercise_scored",
+                        "status": "completed",
+                        "detail": f"Scored {exercise_state.student_name or 'current student'} / {exercise_state.exercise_label or 'current exercise'}.",
+                    }
+                )
+
+            returned_to_overview = False
+            if exercise_state.exit_available:
+                returned_to_overview = await self._exit_sanomapro_exercise_to_overview(page, page_url)
+
+            if decision.should_skip and active_overview_candidate_key:
+                skipped_candidates.add(active_overview_candidate_key)
+            active_overview_candidate_key = None
+
+            if not returned_to_overview:
+                steps.append(
+                    {
+                        "name": "overview_return",
+                        "status": "failed",
+                        "detail": (
+                            "Stopped because the exercise page could not return to the overview after grading."
+                            if exercise_state.exit_available
+                            else "Stopped because the exercise page did not expose an overview return control."
+                        ),
+                    }
+                )
+                summary = (
+                    f"{summary} Stopped because the exercise page could not return to the overview safely."
+                    if summary
+                    else "Stopped because the exercise page could not return to the overview safely."
+                )
+                break
+
+        current_url, extracted_text = await self._capture_page_state(
+            browser_session,
+            current_url,
+            screenshot_path,
+        )
+        final_status = "completed" if skipped_answers == 0 else "needs_review"
+        if not processed_answers and skipped_answers:
+            final_status = "failed"
+        if skipped_answers:
+            summary = (
+                f"{summary} Skipped {skipped_answers} answer(s) that still need teacher review."
+                if summary
+                else f"Skipped {skipped_answers} answer(s) that still need teacher review."
+            )
+
+        steps.append(
+            {
+                "name": "artifacts_saved",
+                "status": "completed",
+                "detail": f"Saved screenshot to {screenshot_path}.",
+            }
+        )
+
+        return ExamSessionGradingTaskResult(
+            job_id=job_id,
+            status=final_status,
+            summary=summary,
+            agent_provider=provider,
+            agent_model=self._resolved_browser_agent_model(),
+            current_url=current_url,
+            screenshot_path=str(screenshot_path),
+            extracted_text=extracted_text,
+            processed_answers=processed_answers,
+            skipped_dark_blue_boxes=0,
+            completed_exercise_columns=0,
+            filled_point_fields=filled_point_fields,
+            current_exercise_label=last_exercise_label,
+            current_student_name=last_student_name,
+            steps=steps,
+        )
+
+    def build_exam_grading_task(
+        self,
+        payload: ExamSessionGradingTaskCreate,
+        *,
+        current_url: str | None = None,
+    ) -> str:
         action_instruction = (
             "Do not type anything into the site. Inspect the page and explain what you would grade."
             if payload.dry_run
@@ -1189,6 +1828,8 @@ Be conservative. If uncertain, do not choose exam_grading.
             if payload.submit_after_typing
             else "Do not trigger any final publish flow. Only move as needed to continue grading."
         )
+        hybrid_automation_context = self._hybrid_automation_prompt_context(current_url)
+        hybrid_automation_block = f"\n{hybrid_automation_context}\n" if hybrid_automation_context else "\n"
         return f"""
 You are already on the correct exam grading page.
 
@@ -1222,7 +1863,7 @@ Rules:
 - Stop when there are no obvious ungraded boxes or when it is unsafe to continue.
 - {action_instruction}
 - {submit_instruction}
-
+{hybrid_automation_block}
 Return a structured summary when finished.
 """.strip()
 
@@ -1253,10 +1894,12 @@ Return a structured summary when finished.
         artifact_dir = self._artifact_dir()
         screenshot_path = Path(payload.screenshot_path) if payload.screenshot_path else artifact_dir / f"{job_id}.png"
         browser_session = self._build_session(payload.target_url, job_id)
+        hybrid_automation_context = self._hybrid_automation_prompt_context(payload.target_url)
         agent = Agent(
             task=(
                 f"Open {payload.target_url}. {payload.instruction} "
                 f"Use DOM text and semantic controls as the primary source of truth while navigating. The active browser model provider is {provider}. "
+                f"{hybrid_automation_context} "
                 "Stop when the task is complete and provide a concise operator-safe summary."
             ),
             llm=llm,
@@ -1363,6 +2006,7 @@ Return a structured summary when finished.
             if payload.submit_after_typing
             else "Do not click a final submit or save action unless it is required to keep the typed number visible."
         )
+        hybrid_automation_context = self._hybrid_automation_prompt_context(payload.target_url)
 
         agent = Agent(
             task=(
@@ -1379,6 +2023,7 @@ Return a structured summary when finished.
                 f"Process at most {payload.max_items} pending exercises. "
                 "Use the visible page state only to confirm where you are. Prefer DOM text and semantic controls for navigation and control selection. "
                 "Always read the submission text from the page, score it against the teacher criteria, and use only a numeric value in the points field. "
+                f"{hybrid_automation_context} "
                 "Skip already graded items. Return a structured summary when done."
             ),
             llm=llm,
@@ -1390,7 +2035,8 @@ Return a structured summary when finished.
 
         try:
             await browser_session.start()
-            history = await agent.run(max_steps=max(20, payload.max_items * 8))
+            step_limit = 10 if provider == "ollama" else max(20, payload.max_items * 8)
+            history = await agent.run(max_steps=step_limit)
             current_url, extracted_text = await self._capture_page_state(
                 browser_session,
                 payload.target_url,
@@ -1525,8 +2171,18 @@ Return a structured summary when finished.
 
             await self._wait_for_exam_page_ready(browser_session)
 
+            if self._is_sanomapro_review_overview_url(current_url) or self._is_sanomapro_review_exercise_url(current_url):
+                return await self._run_sanomapro_autonomous_exam_flow(
+                    payload,
+                    job_id,
+                    browser_session,
+                    current_url=current_url,
+                    provider=provider,
+                    screenshot_path=screenshot_path,
+                )
+
             agent = Agent(
-                task=self.build_exam_grading_task(payload),
+                task=self.build_exam_grading_task(payload, current_url=current_url),
                 llm=llm,
                 browser_session=browser_session,
                 output_model_schema=ExamSessionGradingAgentOutput,

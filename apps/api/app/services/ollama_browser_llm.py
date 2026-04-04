@@ -76,7 +76,10 @@ class EfficientBrowserUseChatOllama(BaseChatModel):
             )
 
             completion = response.message.content or ""
-            parsed = output_format.model_validate_json(completion)
+            from app.services.llm_provider import extract_json_object
+
+            cleaned_completion = extract_json_object(completion)
+            parsed = output_format.model_validate_json(cleaned_completion)
             return ChatInvokeCompletion(completion=parsed, usage=None)
         except Exception as exc:
             raise ModelProviderError(message=str(exc), model=self.name) from exc

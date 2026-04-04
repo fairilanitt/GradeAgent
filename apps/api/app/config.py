@@ -245,8 +245,8 @@ class Settings(BaseSettings):
             return 6
         if parsed <= 0:
             return None
-        if parsed <= 5:
-            return 6
+        if parsed <= 1:
+            return 2
         return parsed
 
     @field_validator("browser_cleanup_stale_after_seconds", mode="before")
