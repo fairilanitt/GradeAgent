@@ -19,6 +19,7 @@ from app.services.ollama_browser_llm import EfficientBrowserUseChatOllama
 ProviderName = Literal["openai", "anthropic", "google", "ollama", "heuristic"]
 RoutingTier = Literal["simple", "standard", "complex"]
 DEFAULT_ROUTER_PROVIDER: ProviderName = "ollama"
+DEFAULT_VISUAL_BROWSER_MODEL = "qwen3-vl:4b"
 GOOGLE_FREE_TIER_BLOCKED_MODELS = (
     "gemini-3.1-pro-preview",
     "gemini-3.1-pro-preview-customtools",
@@ -44,6 +45,16 @@ PROVIDER_ENV_VAR: dict[ProviderName, str] = {
     "ollama": "OLLAMA_HOST",
     "heuristic": "N/A",
 }
+
+OLLAMA_VISION_MODEL_MARKERS = (
+    "vl",
+    "vision",
+    "gemma3",
+    "llava",
+    "bakllava",
+    "minicpm-v",
+    "moondream",
+)
 
 
 class ProviderConfigurationError(ValueError):
@@ -99,6 +110,31 @@ def require_ollama_host(settings: Settings, purpose: str) -> str:
     return host
 
 
+def require_ollama_model_available(settings: Settings, model_name: str, purpose: str) -> str:
+    host = require_ollama_host(settings, purpose)
+
+    try:
+        response = httpx.get(f"{host.rstrip('/')}/api/tags", timeout=min(settings.ollama_timeout_seconds, 5.0))
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        raise ProviderConfigurationError(
+            f"Could not verify Ollama model '{model_name}' for {purpose}. Make sure Ollama is running."
+        ) from exc
+
+    available_models = {
+        str(model.get("model") or model.get("name") or "").strip()
+        for model in payload.get("models", [])
+        if isinstance(model, dict)
+    }
+    if model_name not in available_models:
+        raise ProviderConfigurationError(
+            f"Ollama model '{model_name}' is required for {purpose}. Pull it with `ollama pull {model_name}`."
+        )
+
+    return host
+
+
 def resolve_google_model_name(model_name: str, settings: Settings) -> str:
     normalized_model_name = model_name.strip()
     if not settings.google_api_free_tier_only:
@@ -109,6 +145,32 @@ def resolve_google_model_name(model_name: str, settings: Settings) -> str:
         return settings.google_api_free_tier_fallback_model
 
     return normalized_model_name
+
+
+def browser_model_supports_vision(provider: str, model_name: str) -> bool:
+    normalized_provider = normalize_provider(provider)
+    if normalized_provider == "ollama":
+        normalized_model_name = model_name.strip().lower()
+        return any(marker in normalized_model_name for marker in OLLAMA_VISION_MODEL_MARKERS)
+    return True
+
+
+def resolve_browser_model_name(settings: Settings) -> str:
+    provider = normalize_provider(settings.browser_agent_provider)
+    model_name = settings.browser_agent_model.strip() or DEFAULT_VISUAL_BROWSER_MODEL
+
+    if provider == "google":
+        model_name = resolve_google_model_name(model_name, settings)
+
+    if provider == "ollama" and settings.browser_agent_force_vision:
+        visual_model = settings.browser_agent_visual_model.strip()
+        if visual_model:
+            return visual_model
+        if browser_model_supports_vision(provider, model_name):
+            return model_name
+        return DEFAULT_VISUAL_BROWSER_MODEL
+
+    return model_name
 
 
 def grading_model_name(settings: Settings, routing_tier: RoutingTier) -> str:
@@ -188,7 +250,7 @@ def build_grading_chat_model(settings: Settings, routing_tier: RoutingTier) -> B
 
 def build_browser_use_llm(settings: Settings):
     provider = normalize_provider(settings.browser_agent_provider)
-    model_name = settings.browser_agent_model
+    model_name = resolve_browser_model_name(settings)
 
     if provider == "heuristic":
         raise ProviderConfigurationError("Heuristic cannot be used for browser automation.")
@@ -208,9 +270,10 @@ def build_browser_use_llm(settings: Settings):
         )
 
     if provider == "ollama":
+        host = require_ollama_model_available(settings, model_name, "browser automation")
         return EfficientBrowserUseChatOllama(
             model=model_name,
-            host=require_ollama_host(settings, "browser automation"),
+            host=host,
             timeout=settings.ollama_timeout_seconds,
             keep_alive=settings.ollama_keep_alive,
             think="low" if settings.browser_agent_use_thinking else False,

@@ -37,6 +37,34 @@ class Settings(BaseSettings):
         default="qwen3.5:9b",
         validation_alias=AliasChoices("BROWSER_AGENT_MODEL", "BROWSER_USE_MODEL"),
     )
+    browser_agent_use_vision: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("BROWSER_AGENT_USE_VISION"),
+    )
+    browser_agent_force_vision: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("BROWSER_AGENT_FORCE_VISION"),
+    )
+    browser_agent_visual_model: str = Field(
+        default="qwen3-vl:4b",
+        validation_alias=AliasChoices("BROWSER_AGENT_VISUAL_MODEL"),
+    )
+    browser_visual_backend: str = Field(
+        default="ollama",
+        validation_alias=AliasChoices("BROWSER_VISUAL_BACKEND"),
+    )
+    browser_visual_model: str = Field(
+        default="mlx-community/Qwen2-VL-2B-Instruct-4bit",
+        validation_alias=AliasChoices("BROWSER_VISUAL_MODEL"),
+    )
+    browser_visual_max_image_side: int = Field(
+        default=768,
+        validation_alias=AliasChoices("BROWSER_VISUAL_MAX_IMAGE_SIDE"),
+    )
+    browser_visual_max_tokens: int = Field(
+        default=96,
+        validation_alias=AliasChoices("BROWSER_VISUAL_MAX_TOKENS"),
+    )
     ollama_host: str = Field(
         default="http://127.0.0.1:11434",
         validation_alias=AliasChoices("OLLAMA_HOST"),
@@ -62,7 +90,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OLLAMA_BROWSER_NUM_CTX"),
     )
     ollama_browser_num_predict: int = Field(
-        default=384,
+        default=192,
         validation_alias=AliasChoices("OLLAMA_BROWSER_NUM_PREDICT"),
     )
     ollama_simple_reasoning_mode: str = Field(
@@ -86,11 +114,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("BROWSER_AGENT_USE_THINKING"),
     )
     browser_agent_max_actions_per_step: int = Field(
-        default=2,
+        default=1,
         validation_alias=AliasChoices("BROWSER_AGENT_MAX_ACTIONS_PER_STEP"),
     )
     browser_agent_max_history_items: int | None = Field(
-        default=6,
+        default=3,
         validation_alias=AliasChoices("BROWSER_AGENT_MAX_HISTORY_ITEMS"),
     )
     browser_agent_vision_detail_level: str = Field(
@@ -188,6 +216,15 @@ class Settings(BaseSettings):
             return 8192
         return max(parsed, 4096)
 
+    @field_validator("ollama_browser_num_predict", "browser_visual_max_tokens", mode="before")
+    @classmethod
+    def _clamp_browser_predict_tokens(cls, value: int | str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 192
+        return min(max(parsed, 32), 512)
+
     @field_validator("browser_agent_max_actions_per_step", mode="before")
     @classmethod
     def _clamp_browser_actions(cls, value: int | str) -> int:
@@ -239,6 +276,25 @@ class Settings(BaseSettings):
         if normalized not in {"auto", "low", "high"}:
             return "low"
         return normalized
+
+    @field_validator("browser_visual_backend", mode="before")
+    @classmethod
+    def _normalize_visual_backend(cls, value: str | None) -> str:
+        if not value:
+            return "auto"
+        normalized = str(value).strip().lower()
+        if normalized not in {"auto", "ollama", "mlx_vlm", "off"}:
+            return "auto"
+        return normalized
+
+    @field_validator("browser_visual_max_image_side", mode="before")
+    @classmethod
+    def _clamp_visual_image_side(cls, value: int | str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 768
+        return min(max(parsed, 256), 1600)
 
 
 @lru_cache(maxsize=1)

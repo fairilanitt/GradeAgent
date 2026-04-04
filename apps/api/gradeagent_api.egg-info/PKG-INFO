@@ -7,6 +7,7 @@ Description-Content-Type: text/markdown
 Requires-Dist: fastapi<1.0.0,>=0.115.0
 Requires-Dist: langchain-anthropic<0.4.0,>=0.3.0
 Requires-Dist: langchain-google-genai<3.0.0,>=2.0.0
+Requires-Dist: langchain-ollama<0.4.0,>=0.3.10
 Requires-Dist: httpx<1.0.0,>=0.27.0
 Requires-Dist: langchain-openai<1.0.0,>=0.2.0
 Requires-Dist: openai<3.0.0,>=2.16.0
@@ -15,11 +16,14 @@ Requires-Dist: browser-use<0.13.0,>=0.12.5
 Requires-Dist: psycopg[binary]<4.0.0,>=3.2.0
 Requires-Dist: pydantic-settings<3.0.0,>=2.6.0
 Requires-Dist: redis<6.0.0,>=5.2.0
+Requires-Dist: rich<15.0.0,>=14.3.1
 Requires-Dist: sqlmodel<0.0.23,>=0.0.22
 Requires-Dist: temporalio<2.0.0,>=1.9.0
 Requires-Dist: uvicorn[standard]<1.0.0,>=0.32.0
 Provides-Extra: dev
 Requires-Dist: pytest<9.0.0,>=8.3.0; extra == "dev"
+Provides-Extra: mlx
+Requires-Dist: mlx-vlm<0.5.0,>=0.4.3; extra == "mlx"
 
 # GradeAgent API
 

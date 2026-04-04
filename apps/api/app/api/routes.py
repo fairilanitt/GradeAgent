@@ -38,7 +38,7 @@ from app.services.llm_provider import (
     grading_model_name,
     grading_reasoning_mode,
     normalize_provider,
-    resolve_google_model_name,
+    resolve_browser_model_name,
     should_use_heuristic_grading,
 )
 from app.services.release_service import ReleaseService
@@ -303,9 +303,7 @@ def get_runtime_overview(session: Session = Depends(get_session)) -> RuntimeOver
         ollama_standard_reasoning_mode=grading_reasoning_mode(settings, "standard"),
         ollama_complex_reasoning_mode=grading_reasoning_mode(settings, "complex"),
         browser_agent_provider=browser_agent_provider,
-        browser_agent_model=resolve_google_model_name(settings.browser_agent_model, settings)
-        if browser_agent_provider == "google"
-        else settings.browser_agent_model,
+        browser_agent_model=resolve_browser_model_name(settings),
         browser_agent_use_thinking=settings.browser_agent_use_thinking,
         ollama_host=settings.ollama_host,
         heuristic_fallback_enabled=should_use_heuristic_grading(settings),

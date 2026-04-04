@@ -1,16 +1,65 @@
 import asyncio
+import io
 import os
 import shutil
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+from PIL import Image
+
 from app.config import Settings
-from app.services.browser_navigation import BrowserNavigationService
+from app.services.browser_navigation import BrowserNavigationService, VisualExamPageAssessment
+
+
+class StubCDPTargetAPI:
+    def __init__(self, session: "StubBrowserSessionWithTabs") -> None:
+        self.session = session
+
+    async def getTargets(self) -> dict:
+        return {"targetInfos": list(self.session.raw_cdp_targets)}
+
+    async def attachToTarget(self, params: dict) -> dict:
+        target_id = params["targetId"]
+        for target in self.session.raw_cdp_targets:
+            if target["targetId"] != target_id:
+                continue
+            if not any(tab.target_id == target_id for tab in self.session.tabs):
+                self.session.tabs.append(
+                    SimpleNamespace(
+                        target_id=target["targetId"],
+                        url=target["url"],
+                        title=target["title"],
+                    )
+                )
+            return {"sessionId": f"session-{target_id}"}
+        raise RuntimeError(f"Unknown target id: {target_id}")
+
+
+class StubCDPSendAPI:
+    def __init__(self, session: "StubBrowserSessionWithTabs") -> None:
+        self.Target = StubCDPTargetAPI(session)
+
+
+class StubCDPClientRoot:
+    def __init__(self, session: "StubBrowserSessionWithTabs") -> None:
+        self.send = StubCDPSendAPI(session)
 
 
 class StubPage:
+    def __init__(self, url: str = "https://example.com/exam", title: str = "Example exam") -> None:
+        self.url = url
+        self.title = title
+        self.readiness_metrics = {
+            "readyState": "complete",
+            "textLength": 120,
+            "uiViewChildren": 1,
+            "interactiveCount": 4,
+        }
+
     async def evaluate(self, script: str) -> str:
+        if "uiViewChildren" in script and "interactiveCount" in script:
+            return self.readiness_metrics
         assert "document.body" in script
         return "Oppilaan vastaus\nTest answer"
 
@@ -18,7 +67,10 @@ class StubPage:
         return "dGVzdA=="
 
     async def get_url(self) -> str:
-        return "https://example.com/exam"
+        return self.url
+
+    async def get_title(self) -> str:
+        return self.title
 
 
 class StubBrowserSession:
@@ -26,15 +78,25 @@ class StubBrowserSession:
         self.screenshot_path: Path | None = None
         self.started = False
         self.navigated_to: str | None = None
+        self.current_page_url = "https://example.com/exam"
+        self.current_page_title = "Example exam"
+        self.current_page_metrics = {
+            "readyState": "complete",
+            "textLength": 120,
+            "uiViewChildren": 1,
+            "interactiveCount": 4,
+        }
 
     async def start(self) -> None:
         self.started = True
 
     async def get_current_page_url(self) -> str:
-        return "https://example.com/exam"
+        return self.current_page_url
 
     async def get_current_page(self) -> StubPage:
-        return StubPage()
+        page = StubPage(url=self.current_page_url, title=self.current_page_title)
+        page.readiness_metrics = dict(self.current_page_metrics)
+        return page
 
     async def take_screenshot(self, path: str, full_page: bool) -> bytes:
         self.screenshot_path = Path(path)
@@ -51,29 +113,42 @@ class StubBrowserSessionWithTabs:
     def __init__(self) -> None:
         self.focused_target = None
         self.switched_target_id: str | None = None
+        self.switch_count = 0
+        self.current_page_url = "about:blank"
+        self.current_page_title = "TEAS"
         self.tabs = [
             SimpleNamespace(target_id="blank-tab", url="about:blank", title=""),
             SimpleNamespace(target_id="sanoma-tab", url="https://www.sanomapro.fi/auth/login/", title="SanomaPro"),
             SimpleNamespace(target_id="exam-tab", url="https://arvi.sanomapro.fi/exam/session/123", title="TEAS"),
         ]
+        self.raw_cdp_targets = [
+            {"targetId": tab.target_id, "url": tab.url, "title": tab.title, "type": "page"}
+            for tab in self.tabs
+        ]
+        self._cdp_client_root = StubCDPClientRoot(self)
 
     def get_focused_target(self):
         return self.focused_target
 
     async def get_current_page_url(self) -> str:
-        return "about:blank"
+        return self.current_page_url
 
     async def get_current_page(self):
-        return None
+        if self.current_page_url == "about:blank":
+            return None
+        return StubPage(url=self.current_page_url, title=self.current_page_title)
 
     async def get_tabs(self):
         return self.tabs
 
     async def on_SwitchTabEvent(self, event) -> str:
+        self.switch_count += 1
         self.switched_target_id = event.target_id
         for tab in self.tabs:
             if tab.target_id == event.target_id:
                 self.focused_target = SimpleNamespace(url=tab.url)
+                self.current_page_url = tab.url
+                self.current_page_title = tab.title
                 return tab.target_id
         raise RuntimeError("Unknown target id")
 
@@ -106,6 +181,19 @@ def test_get_current_page_url_switches_to_best_existing_non_blank_tab() -> None:
     assert session.switched_target_id == "exam-tab"
 
 
+def test_get_current_page_url_prefers_exam_tab_over_login_tab() -> None:
+    settings = Settings().model_copy(update={"browser_start_url": "https://www.sanomapro.fi/auth/login/"})
+    service = BrowserNavigationService(settings)
+
+    session = StubBrowserSessionWithTabs()
+    session.current_page_url = "https://www.sanomapro.fi/auth/login/"
+    session.focused_target = SimpleNamespace(url="https://www.sanomapro.fi/auth/login/", title="SanomaPro")
+    current_url = asyncio.run(service.get_current_page_url(session))
+
+    assert current_url == "https://arvi.sanomapro.fi/exam/session/123"
+    assert session.switched_target_id == "exam-tab"
+
+
 def test_get_current_page_url_falls_back_to_direct_focus_when_cdp_root_is_not_ready() -> None:
     settings = Settings().model_copy(update={"browser_start_url": "https://www.sanomapro.fi/auth/login/"})
     service = BrowserNavigationService(settings)
@@ -115,6 +203,147 @@ def test_get_current_page_url_falls_back_to_direct_focus_when_cdp_root_is_not_re
 
     assert current_url == "https://arvi.sanomapro.fi/exam/session/123"
     assert session.agent_focus_target_id == "exam-tab"
+
+
+def test_get_current_page_url_accepts_kampus_content_feed_page() -> None:
+    settings = Settings().model_copy(update={"browser_start_url": "https://www.sanomapro.fi/auth/login/"})
+    service = BrowserNavigationService(settings)
+    session = StubBrowserSessionWithTabs()
+    session.current_page_url = (
+        "https://kampus.sanomapro.fi/content-feed/"
+        "59eabd9a-aefa-4ee6-b5c9-8e5df7698662/es:05E62ED5-5AA0-4572-8B29-CC698732E7D6"
+    )
+    session.current_page_title = "Sanoma Pro Kampus"
+
+    current_url = asyncio.run(service.get_current_page_url(session))
+
+    assert current_url == "https://arvi.sanomapro.fi/exam/session/123"
+    assert session.switched_target_id == "exam-tab"
+
+
+def test_get_current_page_url_can_recover_exam_page_from_raw_cdp_targets() -> None:
+    settings = Settings().model_copy(update={"browser_start_url": "https://www.sanomapro.fi/auth/login/"})
+    service = BrowserNavigationService(settings)
+    session = StubBrowserSessionWithTabs()
+    session.tabs = [
+        SimpleNamespace(target_id="sanoma-tab", url="https://www.sanomapro.fi/auth/login/", title="SanomaPro"),
+    ]
+    session.raw_cdp_targets = [
+        {"targetId": "sanoma-tab", "url": "https://www.sanomapro.fi/auth/login/", "title": "SanomaPro", "type": "page"},
+        {
+            "targetId": "review-tab",
+            "url": "https://arvi.sanomapro.fi/as/teacher/assignment/08c826c8-bc26-4794-a602-8d55f34b617b/review",
+            "title": "",
+            "type": "page",
+        },
+    ]
+    session.current_page_url = "https://www.sanomapro.fi/auth/login/"
+    session.current_page_title = "SanomaPro"
+    session.focused_target = SimpleNamespace(url="https://www.sanomapro.fi/auth/login/", title="SanomaPro")
+
+    current_url = asyncio.run(service.get_current_page_url(session))
+
+    assert (
+        current_url
+        == "https://arvi.sanomapro.fi/as/teacher/assignment/08c826c8-bc26-4794-a602-8d55f34b617b/review"
+    )
+    assert session.switched_target_id == "review-tab"
+
+
+def test_get_current_page_url_can_choose_review_tab_from_visual_assessment(monkeypatch) -> None:
+    service = BrowserNavigationService(
+        Settings().model_copy(
+            update={
+                "browser_visual_backend": "ollama",
+            }
+        )
+    )
+    session = StubBrowserSessionWithTabs()
+    session.tabs = [
+        SimpleNamespace(
+            target_id="course-tab",
+            url="https://kampus.sanomapro.fi/content-feed/launcher",
+            title="Sanoma Pro Kampus",
+        ),
+        SimpleNamespace(
+            target_id="review-tab",
+            url="https://arvi.sanomapro.fi/as/teacher/assignment/demo/review",
+            title="",
+        ),
+    ]
+    session.raw_cdp_targets = [
+        {"targetId": tab.target_id, "url": tab.url, "title": tab.title, "type": "page"}
+        for tab in session.tabs
+    ]
+    session.current_page_url = "https://kampus.sanomapro.fi/content-feed/launcher"
+    session.current_page_title = "Sanoma Pro Kampus"
+
+    monkeypatch.setattr(
+        service,
+        "_resolved_visual_navigation_ollama",
+        lambda: ("http://127.0.0.1:11434", "qwen3-vl:4b"),
+    )
+
+    async def fake_assess(browser_session, **kwargs):
+        url = await browser_session.get_current_page_url()
+        if url.endswith("/review"):
+            return VisualExamPageAssessment(
+                page_kind="exam_grading",
+                confidence=96,
+                page_ready=True,
+                reason="Teacher review layout is visible.",
+                visible_signals=["Pisteytys", "Oppilaan vastaus"],
+            )
+        return VisualExamPageAssessment(
+            page_kind="course_contents",
+            confidence=94,
+            page_ready=False,
+            reason="Course launcher page with content cards.",
+            visible_signals=["Kompassi-digikokeet"],
+        )
+
+    monkeypatch.setattr(service, "_assess_current_page_visually", fake_assess)
+
+    current_url = asyncio.run(service.get_current_page_url(session))
+
+    assert current_url == "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+    assert session.switched_target_id == "review-tab"
+    assert session.switch_count == 1
+
+
+def test_get_current_page_url_does_not_switch_away_when_current_page_is_visually_exam(monkeypatch) -> None:
+    service = BrowserNavigationService(
+        Settings().model_copy(
+            update={
+                "browser_visual_backend": "ollama",
+            }
+        )
+    )
+    session = StubBrowserSessionWithTabs()
+    session.current_page_url = "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+    session.current_page_title = ""
+
+    monkeypatch.setattr(
+        service,
+        "_resolved_visual_navigation_ollama",
+        lambda: ("http://127.0.0.1:11434", "qwen3-vl:4b"),
+    )
+
+    async def fake_assess(browser_session, **kwargs):
+        return VisualExamPageAssessment(
+            page_kind="exam_grading",
+            confidence=98,
+            page_ready=True,
+            reason="Review screen is already visible.",
+            visible_signals=["Oppilaan vastaus", "Pisteytys"],
+        )
+
+    monkeypatch.setattr(service, "_assess_current_page_visually", fake_assess)
+
+    current_url = asyncio.run(service.get_current_page_url(session))
+
+    assert current_url == "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+    assert session.switch_count == 0
 
 
 def test_launch_interactive_browser_opens_default_login_page(monkeypatch) -> None:
@@ -150,6 +379,42 @@ def test_launch_interactive_browser_can_keep_current_page(monkeypatch) -> None:
     assert stub_session.navigated_to is None
 
 
+def test_list_open_tabs_includes_current_page_when_missing_from_cached_tabs() -> None:
+    service = BrowserNavigationService(Settings())
+    session = StubBrowserSessionWithTabs()
+    session.current_page_url = (
+        "https://kampus.sanomapro.fi/content-feed/"
+        "59eabd9a-aefa-4ee6-b5c9-8e5df7698662/es:05E62ED5-5AA0-4572-8B29-CC698732E7D6"
+    )
+    session.current_page_title = "Sanoma Pro Kampus"
+
+    tabs = asyncio.run(service.list_open_tabs(session))
+
+    assert tabs[0]["url"] == session.current_page_url
+    assert tabs[0]["title"] == "Sanoma Pro Kampus (current page)"
+
+
+def test_list_open_tabs_includes_raw_cdp_review_tab() -> None:
+    service = BrowserNavigationService(Settings())
+    session = StubBrowserSessionWithTabs()
+    session.tabs = [
+        SimpleNamespace(target_id="sanoma-tab", url="https://www.sanomapro.fi/auth/login/", title="SanomaPro"),
+    ]
+    session.raw_cdp_targets = [
+        {"targetId": "sanoma-tab", "url": "https://www.sanomapro.fi/auth/login/", "title": "SanomaPro", "type": "page"},
+        {
+            "targetId": "review-tab",
+            "url": "https://arvi.sanomapro.fi/as/teacher/assignment/08c826c8-bc26-4794-a602-8d55f34b617b/review",
+            "title": "",
+            "type": "page",
+        },
+    ]
+
+    tabs = asyncio.run(service.list_open_tabs(session))
+
+    assert any(tab["url"].endswith("/review") for tab in tabs)
+
+
 def test_capture_page_state_saves_screenshot_and_extracts_text(tmp_path) -> None:
     service = BrowserNavigationService(Settings())
     screenshot_path = tmp_path / "page.png"
@@ -165,6 +430,100 @@ def test_capture_page_state_saves_screenshot_and_extracts_text(tmp_path) -> None
     assert current_url == "https://example.com/exam"
     assert extracted_text == "Oppilaan vastaus\nTest answer"
     assert screenshot_path.exists()
+
+
+def test_downscale_visual_image_bytes_limits_max_side() -> None:
+    service = BrowserNavigationService(Settings().model_copy(update={"browser_visual_max_image_side": 512}))
+    image = Image.new("RGB", (1600, 900), color="white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    resized_bytes = service._downscale_visual_image_bytes(buffer.getvalue())
+
+    with Image.open(io.BytesIO(resized_bytes)) as resized:
+        assert max(resized.size) <= 512
+
+
+def test_wait_for_exam_page_ready_accepts_rendered_spa() -> None:
+    service = BrowserNavigationService(Settings())
+    session = StubBrowserSession()
+    session.current_page_url = "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+    session.current_page_metrics = {
+        "readyState": "complete",
+        "textLength": 180,
+        "uiViewChildren": 2,
+        "interactiveCount": 6,
+    }
+
+    ready = asyncio.run(service._wait_for_exam_page_ready(session, timeout_seconds=0.1))
+
+    assert ready is True
+
+
+def test_wait_for_exam_page_ready_can_use_visual_readiness(monkeypatch) -> None:
+    service = BrowserNavigationService(
+        Settings().model_copy(
+            update={
+                "browser_visual_backend": "ollama",
+            }
+        )
+    )
+    session = StubBrowserSession()
+    session.current_page_url = "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+
+    monkeypatch.setattr(
+        service,
+        "_resolved_visual_navigation_ollama",
+        lambda: ("http://127.0.0.1:11434", "qwen3-vl:4b"),
+    )
+
+    assessments = iter(
+        [
+            VisualExamPageAssessment(
+                page_kind="loading",
+                confidence=88,
+                page_ready=False,
+                reason="SPA shell is still empty.",
+                visible_signals=[],
+            ),
+            VisualExamPageAssessment(
+                page_kind="exam_grading",
+                confidence=95,
+                page_ready=True,
+                reason="Teacher grading controls are visible.",
+                visible_signals=["Oppilaan vastaus", "Pisteytys"],
+            ),
+        ]
+    )
+
+    async def fake_assess(browser_session, **kwargs):
+        return next(assessments)
+
+    monkeypatch.setattr(service, "_assess_current_page_visually", fake_assess)
+
+    ready = asyncio.run(service._wait_for_exam_page_ready(session, timeout_seconds=2.0))
+
+    assert ready is True
+
+
+def test_browser_model_supports_vision_uses_forced_visual_fallback() -> None:
+    service = BrowserNavigationService(Settings())
+
+    assert service._browser_model_supports_vision() is False
+    assert service._resolved_browser_agent_model() == "qwen3.5:9b"
+
+    vision_enabled_service = BrowserNavigationService(
+        Settings().model_copy(
+            update={
+                "browser_agent_model": "qwen3.5:9b",
+                "browser_agent_use_vision": True,
+                "browser_agent_force_vision": True,
+                "browser_agent_visual_model": "qwen3-vl:4b",
+            }
+        )
+    )
+    assert vision_enabled_service._browser_model_supports_vision() is True
+    assert vision_enabled_service._resolved_browser_agent_model() == "qwen3-vl:4b"
 
 
 def test_build_interactive_session_uses_persistent_profile_dir(tmp_path) -> None:

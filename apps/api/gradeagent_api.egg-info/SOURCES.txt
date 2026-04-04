@@ -11,7 +11,9 @@ app/schemas/api.py
 app/services/browser_navigation.py
 app/services/grading_pipeline.py
 app/services/llm_provider.py
+app/services/mlx_vlm_visual.py
 app/services/model_router.py
+app/services/ollama_browser_llm.py
 app/services/release_service.py
 app/services/rubric_validator.py
 app/services/text_scoring.py
@@ -28,6 +30,7 @@ gradeagent_api.egg-info/requires.txt
 gradeagent_api.egg-info/top_level.txt
 tests/conftest.py
 tests/test_api.py
+tests/test_browser_navigation.py
 tests/test_cli.py
 tests/test_llm_provider.py
 tests/test_rubric_validator.py

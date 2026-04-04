@@ -4,10 +4,13 @@ from app.config import Settings
 from app.schemas.api import CriterionDefinition
 from app.services.llm_provider import (
     ProviderConfigurationError,
+    browser_model_supports_vision,
     build_browser_use_llm,
     grading_reasoning_mode,
     normalize_provider,
     require_ollama_host,
+    require_ollama_model_available,
+    resolve_browser_model_name,
     resolve_google_model_name,
 )
 from app.services.model_router import GradeRequest, HeuristicModelRouter, ManagedModelRouter, get_model_router, resolve_routing_decision
@@ -36,16 +39,81 @@ def test_ollama_provider_raises_if_host_is_unreachable(monkeypatch: pytest.Monke
 def test_ollama_provider_builds_browser_llm_when_host_is_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BROWSER_AGENT_PROVIDER", "ollama")
     monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    monkeypatch.setenv("BROWSER_AGENT_MODEL", "qwen3.5:9b")
+    monkeypatch.setenv("BROWSER_AGENT_FORCE_VISION", "true")
+    monkeypatch.setenv("BROWSER_AGENT_VISUAL_MODEL", "qwen3-vl:4b")
 
     class StubResponse:
         def raise_for_status(self) -> None:
             return None
+
+        def json(self) -> dict:
+            return {"models": [{"name": "qwen3-vl:4b"}]}
 
     monkeypatch.setattr("app.services.llm_provider.httpx.get", lambda *args, **kwargs: StubResponse())
 
     llm = build_browser_use_llm(Settings())
 
     assert llm.provider == "ollama"
+    assert llm.model == "qwen3-vl:4b"
+
+
+def test_browser_model_resolution_promotes_text_model_to_visual_when_forced() -> None:
+    settings = Settings().model_copy(
+        update={
+            "browser_agent_provider": "ollama",
+            "browser_agent_model": "qwen3.5:9b",
+            "browser_agent_force_vision": True,
+            "browser_agent_visual_model": "qwen3-vl:4b",
+        }
+    )
+
+    assert resolve_browser_model_name(settings) == "qwen3-vl:4b"
+    assert browser_model_supports_vision(settings.browser_agent_provider, resolve_browser_model_name(settings)) is True
+
+
+def test_browser_model_resolution_keeps_text_model_when_force_vision_is_off() -> None:
+    settings = Settings().model_copy(
+        update={
+            "browser_agent_provider": "ollama",
+            "browser_agent_model": "qwen3.5:9b",
+            "browser_agent_force_vision": False,
+            "browser_agent_visual_model": "qwen3-vl:4b",
+        }
+    )
+
+    assert resolve_browser_model_name(settings) == "qwen3.5:9b"
+
+
+def test_browser_model_resolution_prefers_dedicated_visual_model_even_if_browser_model_is_also_visual() -> None:
+    settings = Settings().model_copy(
+        update={
+            "browser_agent_provider": "ollama",
+            "browser_agent_model": "qwen3-vl:8b",
+            "browser_agent_force_vision": True,
+            "browser_agent_visual_model": "qwen3-vl:4b",
+        }
+    )
+
+    assert resolve_browser_model_name(settings) == "qwen3-vl:4b"
+
+
+def test_ollama_visual_model_check_raises_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+    class StubResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"models": [{"name": "qwen3.5:9b"}]}
+
+    monkeypatch.setattr("app.services.llm_provider.httpx.get", lambda *args, **kwargs: StubResponse())
+
+    with pytest.raises(ProviderConfigurationError) as exc_info:
+        require_ollama_model_available(Settings(), "qwen3-vl:4b", "browser automation")
+
+    assert "ollama pull qwen3-vl:4b" in str(exc_info.value)
 
 
 def test_routing_uses_lite_model_for_simple_text() -> None:
