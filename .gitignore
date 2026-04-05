@@ -25,3 +25,7 @@ playwright-report/
 test-results/
 .env
 README.md
+
+apps/macos/GradeAgentMacApp/.build/
+apps/macos/GradeAgentMacApp/.swiftpm/
+DerivedData/
