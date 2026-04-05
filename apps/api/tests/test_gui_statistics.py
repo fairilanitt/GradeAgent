@@ -21,6 +21,8 @@ def test_gui_statistics_store_appends_and_loads_runs(tmp_path) -> None:
                 points_text="1 / 2",
                 score_awarded=1.0,
                 score_possible=2.0,
+                submitted_prompt_text="Teacher grading instructions:\nPrompt body",
+                model_name="gemini-3.1-pro-preview",
             )
         ],
     )
@@ -42,3 +44,4 @@ def test_gui_statistics_store_appends_and_loads_runs(tmp_path) -> None:
     assert [run.run_id for run in loaded] == ["run-2", "run-1"]
     assert loaded[0].category_name == "Grammatik"
     assert loaded[1].entries[0].score_possible == 2.0
+    assert loaded[1].entries[0].model_name == "gemini-3.1-pro-preview"

@@ -85,6 +85,16 @@ struct GuiStatisticsEntry: Codable, Identifiable, Hashable {
     let scoreAwarded: Double?
     let scorePossible: Double?
     let basisLines: [String]
+    let promptTemplateText: String?
+    let renderedInstructionsText: String?
+    let submittedPromptText: String?
+    let modelProvider: String?
+    let modelName: String?
+    let modelResponseText: String?
+    let repairPromptText: String?
+    let repairResponseText: String?
+    let usedHeuristicFallback: Bool?
+    let fallbackReason: String?
     let exerciseURL: String
     let status: String
 

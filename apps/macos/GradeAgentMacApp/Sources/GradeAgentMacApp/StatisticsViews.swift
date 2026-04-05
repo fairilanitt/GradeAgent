@@ -15,6 +15,14 @@ struct StatisticsPageView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
+                    if let statisticsErrorMessage = store.statisticsErrorMessage {
+                        StatisticsCard(title: "Tilastojen lataus", subtitle: "Tilastosivun tiedot eivät juuri nyt päivittyneet.") {
+                            Text(statisticsErrorMessage)
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.82))
+                                .textSelection(.enabled)
+                        }
+                    }
                     filters
                     metrics
 
@@ -464,6 +472,111 @@ struct StatisticsPageView: View {
     }
 }
 
+struct LogsPageView: View {
+    @EnvironmentObject private var store: GuiStore
+    let compact: Bool
+
+    @State private var searchText = ""
+
+    var body: some View {
+        GlassCard(fillOpacity: 0.09, strokeOpacity: 0.08) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    metrics
+
+                    if filteredLogs.isEmpty {
+                        EmptyStateView(
+                            title: "Ei lokeja",
+                            message: "Kun arvioit tehtäviä Ohjaus-sivulla, jokaisesta oppilasvastauksesta tallentuu tänne tarkka loki promptteineen ja mallivastauksineen."
+                        )
+                        .frame(maxWidth: .infinity, minHeight: 320)
+                    } else {
+                        LazyVStack(spacing: 14) {
+                            ForEach(filteredLogs) { log in
+                                LogEntryCard(log: log, compact: compact)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.bottom, 8)
+            }
+            .scrollIndicators(.visible)
+        }
+        .searchable(text: $searchText, prompt: "Hae opiskelijaa, tehtävää tai mallia")
+        .task {
+            await store.refreshStatistics()
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Lokit")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                Text("Tarkastele jokaista arvioitua oppilasvastausta lokina: DOM-konteksti, lähetetty prompti, käytetty malli ja mallin perustelut.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.76))
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                Task { await store.refreshStatistics() }
+            } label: {
+                Label("Päivitä", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#7E8A93")))
+        }
+    }
+
+    private var metrics: some View {
+        AdaptiveAxisStack(horizontal: !compact, spacing: 12) {
+            StatisticsMetricTile(title: "Lokit", value: "\(filteredLogs.count)", subtitle: "Yksittäiset arviointimerkinnät")
+            StatisticsMetricTile(title: "Ajot", value: "\(Set(filteredLogs.map(\.runID)).count)", subtitle: "Lokeissa näkyvät ajot")
+            StatisticsMetricTile(title: "Mallit", value: "\(Set(filteredLogs.map(\.modelDisplay)).count)", subtitle: "Käytetyt mallit")
+            StatisticsMetricTile(title: "Fallback", value: "\(filteredLogs.filter(\.usedHeuristicFallback).count)", subtitle: "Heuristiset varapolut")
+        }
+    }
+
+    private var filteredLogs: [StatisticsLogRecord] {
+        allLogs.filter { log in
+            let trimmedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedQuery.isEmpty else { return true }
+            let haystack = [
+                log.studentName,
+                log.studentProgress,
+                log.assignmentTitle,
+                log.groupName,
+                log.categoryName,
+                log.exerciseLabel,
+                log.exerciseNumber,
+                log.promptTitle,
+                log.modelDisplay,
+                log.targetText,
+                log.answerText,
+                log.modelAnswerText,
+                log.submittedPromptText,
+                log.modelResponseText,
+                log.reasoningText,
+            ]
+            .compactMap { $0 }
+            .joined(separator: "\n")
+            return haystack.localizedCaseInsensitiveContains(trimmedQuery)
+        }
+    }
+
+    private var allLogs: [StatisticsLogRecord] {
+        store.statisticsRuns.flatMap { run in
+            run.entries.map { entry in
+                StatisticsLogRecord(run: run, entry: entry)
+            }
+        }
+    }
+}
+
 private struct StatisticsTimelinePoint: Identifiable {
     let id: String
     let recordedAt: Date
@@ -682,6 +795,241 @@ private struct StatisticsAnnotationBubble: View {
     }
 }
 
+private struct StatisticsLogRecord: Identifiable {
+    let run: GuiStatisticsRun
+    let entry: GuiStatisticsEntry
+
+    var id: String {
+        "\(run.id)|\(entry.id)"
+    }
+
+    var runID: String {
+        run.id
+    }
+
+    var recordedAt: Date {
+        run.recordedAt
+    }
+
+    var studentName: String {
+        entry.studentName.isEmpty ? "Tuntematon opiskelija" : entry.studentName
+    }
+
+    var studentProgress: String? {
+        entry.studentProgress
+    }
+
+    var assignmentTitle: String {
+        entry.assignmentTitle.isEmpty ? run.assignmentTitle : entry.assignmentTitle
+    }
+
+    var groupName: String? {
+        entry.groupName ?? run.groupName
+    }
+
+    var categoryName: String? {
+        entry.categoryName ?? run.categoryName
+    }
+
+    var exerciseLabel: String? {
+        entry.exerciseLabel ?? run.exerciseLabel
+    }
+
+    var exerciseNumber: String? {
+        entry.exerciseNumber ?? run.exerciseNumber
+    }
+
+    var promptTitle: String? {
+        run.promptTitle
+    }
+
+    var targetText: String {
+        entry.targetText
+    }
+
+    var answerText: String {
+        entry.answerText
+    }
+
+    var modelAnswerText: String {
+        entry.modelAnswerText
+    }
+
+    var submittedPromptText: String? {
+        entry.submittedPromptText?.nilIfBlank ?? entry.renderedInstructionsText?.nilIfBlank
+    }
+
+    var modelResponseText: String? {
+        entry.modelResponseText?.nilIfBlank ?? reasoningText
+    }
+
+    var reasoningText: String? {
+        let lines = entry.basisLines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    var modelDisplay: String {
+        let provider = entry.modelProvider?.nilIfBlank
+        let name = entry.modelName?.nilIfBlank
+        switch (provider, name) {
+        case (.some(let provider), .some(let name)):
+            return "\(provider) / \(name)"
+        case (.none, .some(let name)):
+            return name
+        case (.some(let provider), .none):
+            return provider
+        case (.none, .none):
+            return "Tuntematon malli"
+        }
+    }
+
+    var pointsText: String {
+        entry.pointsText
+    }
+
+    var usedHeuristicFallback: Bool {
+        entry.usedHeuristicFallback ?? false
+    }
+
+    var fallbackReason: String? {
+        entry.fallbackReason?.nilIfBlank
+    }
+
+    var objectiveText: String {
+        entry.objectiveText
+    }
+
+    var exerciseURL: String? {
+        entry.exerciseURL.nilIfBlank
+    }
+}
+
+private struct LogEntryCard: View {
+    let log: StatisticsLogRecord
+    let compact: Bool
+
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                AdaptiveAxisStack(horizontal: !compact, spacing: 10) {
+                    StatisticsMetaPill(label: "Ryhmä", value: log.groupName ?? "-")
+                    StatisticsMetaPill(label: "Kategoria", value: log.categoryName ?? "-")
+                    StatisticsMetaPill(label: "Tehtävä", value: log.exerciseLabel ?? log.exerciseNumber ?? "-")
+                    StatisticsMetaPill(label: "Malli", value: log.modelDisplay)
+                    StatisticsMetaPill(label: "Prompti", value: log.promptTitle ?? "-")
+                }
+
+                AdaptiveAxisStack(horizontal: !compact, spacing: 10) {
+                    StatisticsDetailBlock(title: "Tavoite", text: log.targetText)
+                    StatisticsDetailBlock(title: "Oppilaan vastaus", text: log.answerText)
+                    StatisticsDetailBlock(title: "Mallivastaus", text: log.modelAnswerText)
+                }
+
+                StatisticsDetailBlock(title: "Ohje", text: log.objectiveText)
+
+                LogConversationSection(
+                    sender: "GradeAgent lähetti",
+                    title: "Lähetetty prompti",
+                    bodyText: log.submittedPromptText ?? "Tästä merkinnästä ei ole tallentunut lähetettyä promptia."
+                )
+
+                LogConversationSection(
+                    sender: modelReplyLabel,
+                    title: "Mallin vastaus",
+                    bodyText: log.modelResponseText ?? "Tästä merkinnästä ei ole tallentunut raakaa mallivastausta."
+                )
+
+                if let fallbackReason = log.fallbackReason {
+                    StatisticsDetailBlock(title: "Fallback-syy", text: fallbackReason)
+                }
+
+                if let reasoningText = log.reasoningText {
+                    StatisticsDetailBlock(title: "Tallennettu perustelu", text: reasoningText)
+                }
+
+                if let exerciseURL = log.exerciseURL {
+                    StatisticsDetailBlock(title: "Linkki", text: exerciseURL)
+                }
+            }
+            .padding(.top, 12)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(log.studentName)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+
+                    Text(
+                        [
+                            log.studentProgress,
+                            log.pointsText.nilIfBlank,
+                            log.exerciseLabel ?? log.exerciseNumber,
+                            log.recordedAt.formatted(.dateTime.day().month().hour().minute()),
+                        ]
+                        .compactMap { $0 }
+                        .joined(separator: " · ")
+                    )
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 8) {
+                    if log.usedHeuristicFallback {
+                        PromptTag(title: "Fallback")
+                    }
+                    PromptTag(title: log.modelDisplay)
+                }
+            }
+        }
+        .tint(.white)
+        .padding(16)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    private var modelReplyLabel: String {
+        if let modelName = log.entry.modelName?.nilIfBlank {
+            return "\(modelName) vastasi"
+        }
+        return "Malli vastasi"
+    }
+}
+
+private struct LogConversationSection: View {
+    let sender: String
+    let title: String
+    let bodyText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(sender)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.58))
+
+            WorkspaceCanvas(title: title, subtitle: "Tarkka loki tästä vaiheesta.") {
+                ScrollView {
+                    Text(bodyText)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
+        }
+    }
+}
+
 private enum StatisticsFormatting {
     static func percent(_ value: Double) -> String {
         let normalized = max(0, min(1, value))
@@ -703,5 +1051,11 @@ private extension GuiStatisticsRun {
         let ratios = entries.compactMap(\.scoreRatio)
         guard !ratios.isEmpty else { return nil }
         return ratios.reduce(0, +) / Double(ratios.count)
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
     }
 }

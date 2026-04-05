@@ -298,6 +298,7 @@ def test_gui_prompt_routes_expose_prompt_library(client, monkeypatch) -> None:
 def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch) -> None:
     grade_calls: list[tuple[str, str, str | None, str | None, int]] = []
     shutdown_calls = {"count": 0}
+    stop_grading_calls = {"count": 0}
 
     overview_before = SanomaOverviewState(
         assignment_title="RUB14.7 koe",
@@ -369,6 +370,9 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
                 overview_after,
             )
 
+        def request_stop_grading(self) -> None:
+            stop_grading_calls["count"] += 1
+
         def statistics(self):
             return [
                 {
@@ -407,6 +411,11 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
                             "score_awarded": 1.0,
                             "score_possible": 2.0,
                             "basis_lines": ["Summary: Meaning partly matches."],
+                            "submitted_prompt_text": "Teacher grading instructions:\\nPrompt body",
+                            "model_provider": "vertex_ai",
+                            "model_name": "gemini-3.1-pro-preview",
+                            "model_response_text": "Grade: 1 / 2 points",
+                            "used_heuristic_fallback": False,
                             "exercise_url": "https://arvi.sanomapro.fi/demo",
                             "status": "scored",
                         }
@@ -456,6 +465,12 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
     assert statistics_payload["runs"][0]["category_name"] == "Text 4"
     assert statistics_payload["runs"][0]["prompt_title"] == "2p Lauseet [SWE -> FIN]"
     assert statistics_payload["runs"][0]["entries"][0]["score_possible"] == 2.0
+    assert statistics_payload["runs"][0]["entries"][0]["model_name"] == "gemini-3.1-pro-preview"
+    assert statistics_payload["runs"][0]["entries"][0]["submitted_prompt_text"].startswith("Teacher grading instructions:")
+
+    stop_grading_response = client.post("/api/gui/exercises/stop")
+    assert stop_grading_response.status_code == 204
+    assert stop_grading_calls["count"] == 1
 
     shutdown_response = client.post("/api/gui/shutdown")
     assert shutdown_response.status_code == 204

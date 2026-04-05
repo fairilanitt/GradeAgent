@@ -7,6 +7,7 @@ import json
 import platform
 import re
 import shutil
+import threading
 import tempfile
 import time
 from pathlib import Path
@@ -156,6 +157,26 @@ class SanomaScoreDecision(BaseModel):
     scores: list[SanomaScoreDecisionField] = Field(default_factory=list)
 
 
+class SanomaScoreDecisionAudit(BaseModel):
+    prompt_template_text: str = ""
+    rendered_instructions_text: str = ""
+    system_prompt_text: str = ""
+    submitted_prompt_text: str = ""
+    model_provider: str | None = None
+    model_name: str | None = None
+    model_response_text: str = ""
+    repair_prompt_text: str = ""
+    repair_response_text: str = ""
+    used_heuristic_fallback: bool = False
+    fallback_reason: str = ""
+
+
+class SanomaScoreRepairResult(BaseModel):
+    prompt_text: str = ""
+    response_text: str = ""
+    decision: SanomaScoreDecision | None = None
+
+
 class SanomaGradingReportEntry(BaseModel):
     student_name: str = ""
     student_progress: str | None = None
@@ -173,6 +194,16 @@ class SanomaGradingReportEntry(BaseModel):
     score_awarded: float | None = None
     score_possible: float | None = None
     basis_lines: list[str] = Field(default_factory=list)
+    prompt_template_text: str = ""
+    rendered_instructions_text: str = ""
+    submitted_prompt_text: str = ""
+    model_provider: str | None = None
+    model_name: str | None = None
+    model_response_text: str = ""
+    repair_prompt_text: str = ""
+    repair_response_text: str = ""
+    used_heuristic_fallback: bool = False
+    fallback_reason: str = ""
     exercise_url: str = ""
     status: str = "scored"
 
@@ -206,6 +237,8 @@ class BrowserNavigationService:
         self._last_sanomapro_students_total_count: int | None = None
         self._last_sanomapro_report_job_id: str | None = None
         self._last_sanomapro_report_entries: list[SanomaGradingReportEntry] = []
+        self._last_sanomapro_score_audit: SanomaScoreDecisionAudit | None = None
+        self._stop_grading_requested = threading.Event()
 
     def _remember_sanomapro_overview_context(self, overview_state: SanomaOverviewState) -> None:
         self._last_sanomapro_assignment_title = (overview_state.assignment_title or "").strip() or None
@@ -249,6 +282,23 @@ class BrowserNavigationService:
         self._last_sanomapro_report_job_id = None
         self._last_sanomapro_report_entries = []
         return entries
+
+    def _store_last_sanomapro_score_audit(self, audit: SanomaScoreDecisionAudit | None) -> None:
+        self._last_sanomapro_score_audit = audit.model_copy() if audit is not None else None
+
+    def consume_last_sanomapro_score_audit(self) -> SanomaScoreDecisionAudit | None:
+        audit = self._last_sanomapro_score_audit.model_copy() if self._last_sanomapro_score_audit is not None else None
+        self._last_sanomapro_score_audit = None
+        return audit
+
+    def request_stop_grading(self) -> None:
+        self._stop_grading_requested.set()
+
+    def clear_stop_grading_request(self) -> None:
+        self._stop_grading_requested.clear()
+
+    def _should_stop_grading(self) -> bool:
+        return self._stop_grading_requested.is_set()
 
     def _sanomapro_overview_column_label(self, column: SanomaOverviewExerciseColumn | None) -> str | None:
         if column is None:
@@ -1554,6 +1604,32 @@ Be conservative. If uncertain, do not choose exam_grading.
             f" ({', '.join(parts)})"
         )
 
+    def _sanomapro_compact_exercise_label(self, exercise_state: SanomaExerciseState) -> str:
+        category_name = (exercise_state.current_section_name or "").strip()
+        exercise_number = (exercise_state.current_progress_document_label or "").strip()
+        if category_name and exercise_number:
+            return f"{category_name} / {exercise_number}"
+        if category_name:
+            return category_name
+        if exercise_number:
+            return f"Tehtävä {exercise_number}"
+        return (exercise_state.exercise_label or "").strip() or "-"
+
+    def _sanomapro_compact_exercise_label_from_entry(self, entry: SanomaGradingReportEntry | None) -> str:
+        if entry is None:
+            return "-"
+        category_name = (entry.category_name or "").strip()
+        exercise_number = (entry.exercise_number or "").strip()
+        if category_name and exercise_number:
+            return f"{category_name} / {exercise_number}"
+        if entry.exercise_label and entry.exercise_label.strip():
+            return entry.exercise_label.strip()
+        if category_name:
+            return category_name
+        if exercise_number:
+            return f"Tehtävä {exercise_number}"
+        return "-"
+
     def _sanomapro_exercise_overlay_meta(
         self,
         exercise_state: SanomaExerciseState,
@@ -1633,6 +1709,7 @@ Be conservative. If uncertain, do not choose exam_grading.
         *,
         exercise_url: str,
         dry_run: bool,
+        audit: SanomaScoreDecisionAudit | None = None,
     ) -> SanomaGradingReportEntry:
         return SanomaGradingReportEntry(
             student_name=exercise_state.student_name or "Unknown student",
@@ -1640,7 +1717,7 @@ Be conservative. If uncertain, do not choose exam_grading.
             assignment_title=exercise_state.assignment_title or "",
             group_name=exercise_state.group_name,
             category_name=exercise_state.current_section_name,
-            exercise_label=exercise_state.exercise_label,
+            exercise_label=self._sanomapro_compact_exercise_label(exercise_state),
             exercise_number=exercise_state.current_progress_document_label,
             objective_text=exercise_state.objective_text,
             target_text=self._sanomapro_source_phrase_text(exercise_state),
@@ -1651,6 +1728,16 @@ Be conservative. If uncertain, do not choose exam_grading.
             score_awarded=self._sanomapro_total_score_awarded(decision),
             score_possible=self._sanomapro_total_score_possible(exercise_state),
             basis_lines=self._sanomapro_decision_basis_lines(decision),
+            prompt_template_text=audit.prompt_template_text if audit is not None else "",
+            rendered_instructions_text=audit.rendered_instructions_text if audit is not None else "",
+            submitted_prompt_text=audit.submitted_prompt_text if audit is not None else "",
+            model_provider=audit.model_provider if audit is not None else None,
+            model_name=audit.model_name if audit is not None else None,
+            model_response_text=audit.model_response_text if audit is not None else "",
+            repair_prompt_text=audit.repair_prompt_text if audit is not None else "",
+            repair_response_text=audit.repair_response_text if audit is not None else "",
+            used_heuristic_fallback=audit.used_heuristic_fallback if audit is not None else False,
+            fallback_reason=audit.fallback_reason if audit is not None else "",
             exercise_url=exercise_url,
             status="needs_review" if decision.should_skip else ("dry_run" if dry_run else "scored"),
         )
@@ -1710,16 +1797,52 @@ Be conservative. If uncertain, do not choose exam_grading.
                 lines.extend(
                     [
                         f"Exercise: {entry.exercise_label or '-'}",
+                        f"Group: {entry.group_name or '-'}",
+                        f"Category: {entry.category_name or '-'}",
+                        f"Exercise number: {entry.exercise_number or '-'}",
                         f"Status: {entry.status}",
                         f"Link: {entry.exercise_url or '-'}",
+                        f"Objective: {entry.objective_text or '-'}",
+                        f"Target: {entry.target_text or '-'}",
                         f"Question: {entry.question_text or '-'}",
                         f"Answer: {entry.answer_text or '-'}",
                         f"Model Answer: {entry.model_answer_text or '-'}",
                         f"Points: {entry.points_text or '-'}",
+                        f"Model used: {((entry.model_provider or '-') + ' / ' + (entry.model_name or '-')).strip()}",
                         "Points basis:",
                     ]
                 )
                 lines.extend(f"- {line}" for line in entry.basis_lines)
+                if entry.fallback_reason:
+                    lines.append(f"Heuristic fallback: {entry.fallback_reason}")
+                if entry.rendered_instructions_text:
+                    lines.extend(
+                        [
+                            "Rendered instructions:",
+                            entry.rendered_instructions_text,
+                        ]
+                    )
+                if entry.submitted_prompt_text:
+                    lines.extend(
+                        [
+                            "Submitted prompt:",
+                            entry.submitted_prompt_text,
+                        ]
+                    )
+                if entry.model_response_text:
+                    lines.extend(
+                        [
+                            "Model response:",
+                            entry.model_response_text,
+                        ]
+                    )
+                if entry.repair_response_text:
+                    lines.extend(
+                        [
+                            "Repair response:",
+                            entry.repair_response_text,
+                        ]
+                    )
                 lines.append("")
             lines.append("")
 
@@ -2216,21 +2339,11 @@ Be conservative. If uncertain, do not choose exam_grading.
         parser: PydanticOutputParser,
         raw_text: str,
         exercise_state: SanomaExerciseState,
-    ) -> SanomaScoreDecision | None:
+    ) -> SanomaScoreRepairResult:
         if not raw_text.strip():
-            return None
+            return SanomaScoreRepairResult()
 
-        try:
-            response = await model.ainvoke(
-                [
-                    SystemMessage(
-                        content=(
-                            "Convert the previous grading draft into valid JSON for the requested schema. "
-                            "Return JSON only. Do not add commentary."
-                        )
-                    ),
-                    HumanMessage(
-                        content=f"""
+        repair_prompt_text = f"""
 Visible score fields:
 {chr(10).join(
     f"- index {field.index}: max {field.max_score}, label '{field.label or field.container_text}'"
@@ -2243,14 +2356,30 @@ Previous non-JSON draft:
 JSON schema instructions:
 {parser.get_format_instructions()}
 """.strip()
+
+        try:
+            response = await model.ainvoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "Convert the previous grading draft into valid JSON for the requested schema. "
+                            "Return JSON only. Do not add commentary."
+                        )
+                    ),
+                    HumanMessage(
+                        content=repair_prompt_text
                     ),
                 ]
             )
         except Exception:
-            return None
+            return SanomaScoreRepairResult(prompt_text=repair_prompt_text)
 
         repaired_text = flatten_llm_content(response.content)
-        return self._parse_sanomapro_score_decision_text(repaired_text, parser, exercise_state)
+        return SanomaScoreRepairResult(
+            prompt_text=repair_prompt_text,
+            response_text=repaired_text,
+            decision=self._parse_sanomapro_score_decision_text(repaired_text, parser, exercise_state),
+        )
 
     async def _extract_sanomapro_overview_state(self, page) -> SanomaOverviewState:
         state = await self._evaluate_page_json(
@@ -2453,6 +2582,29 @@ JSON schema instructions:
         page = await browser_session.get_current_page()
         if page is None:
             raise RuntimeError("The managed browser did not expose an active overview page.")
+        return await self._extract_sanomapro_overview_state(page)
+
+    async def inspect_sanomapro_overview_passively(self, browser_session: BrowserSession) -> SanomaOverviewState:
+        current_url = None
+        try:
+            current_url = await browser_session.get_current_page_url()
+        except Exception:
+            current_url = None
+
+        page = await browser_session.get_current_page()
+        if page is None:
+            raise RuntimeError("The managed browser did not expose an active overview page.")
+
+        if not current_url:
+            try:
+                current_url = await page.get_url()
+            except Exception:
+                current_url = None
+
+        if not current_url or not self._is_sanomapro_review_overview_url(current_url):
+            raise RuntimeError("Open the Sanoma Pro review overview page before refreshing exercises.")
+
+        await self._wait_for_exam_page_ready(browser_session)
         return await self._extract_sanomapro_overview_state(page)
 
     def _sanomapro_overview_column_by_key(
@@ -2658,9 +2810,9 @@ JSON schema instructions:
               const maxScoreTotal = scoreFields.reduce((sum, field) => sum + (Number.isFinite(field.max_score) ? field.max_score : 0), 0);
               const maxPoints = maxScoreTotal > 0 ? Math.round(maxScoreTotal) : null;
               const explicitExerciseLabel = textOf(
-                Array.from(document.querySelectorAll('div,span,h2,h3,h4')).find((el) =>
-                  /^Tehtävä\\s+\\d+/i.test(textOf(el.innerText || el.textContent || ''))
-                )?.innerText || ''
+                Array.from(document.querySelectorAll('h2,h3,h4,span,div'))
+                  .map((el) => textOf(el.innerText || el.textContent || ''))
+                  .find((text) => /^Tehtävä\\s+\\d+/i.test(text) && text.length <= 80) || ''
               );
               const derivedExerciseLabel = [currentProgressDocument?.section_name || '', currentProgressDocument?.label || '']
                 .filter(Boolean)
@@ -2673,7 +2825,7 @@ JSON schema instructions:
                 student_progress: studentProgress || null,
                 current_student_index: currentStudentIndex,
                 student_count: studentCount,
-                exercise_label: explicitExerciseLabel || derivedExerciseLabel || null,
+                exercise_label: derivedExerciseLabel || explicitExerciseLabel || null,
                 current_section_name: currentProgressDocument?.section_name || null,
                 current_progress_document_label: currentProgressDocument?.label || null,
                 current_progress_document_selector_index: currentProgressDocument?.selector_index ?? null,
@@ -2729,7 +2881,14 @@ JSON schema instructions:
         exercise_state: SanomaExerciseState,
     ) -> SanomaScoreDecision:
         exercise_state = self._apply_sanomapro_overview_context(exercise_state)
+        self._store_last_sanomapro_score_audit(None)
         if not exercise_state.score_fields:
+            self._store_last_sanomapro_score_audit(
+                SanomaScoreDecisionAudit(
+                    prompt_template_text=payload.instructions.strip(),
+                    rendered_instructions_text=self._render_sanomapro_grading_instructions(payload.instructions, exercise_state),
+                )
+            )
             return SanomaScoreDecision(
                 summary="No score fields were visible on the current exercise page.",
                 confidence=0,
@@ -2769,36 +2928,18 @@ JSON schema instructions:
 
         sanomapro_provider = normalize_provider(self.settings.sanomapro_exercise_grading_provider)
         sanomapro_model = self.settings.sanomapro_exercise_grading_model.strip() or "gemini-3.1-pro-preview"
-        if sanomapro_provider == "heuristic":
-            return await self._build_sanomapro_heuristic_score_decision(
-                score_request,
-                exercise_state,
-            )
-
         parser = PydanticOutputParser(pydantic_object=SanomaScoreDecision)
         scoring_policy_text = self._sanomapro_scoring_policy_text(exercise_state)
         fields_text = "\n".join(
             f"- index {field.index}: max {field.max_score}, current value '{field.current_value}', label '{field.label or field.container_text}'"
             for field in exercise_state.score_fields
         )
-        try:
-            model = build_explicit_grading_chat_model(
-                self.settings,
-                provider=sanomapro_provider,
-                model_name=sanomapro_model,
-                routing_tier="standard",
-            )
-            response = await model.ainvoke(
-                [
-                    SystemMessage(
-                        content=(
-                            "You are a deterministic Sanoma Pro exam grading engine. "
-                            "Read the visible exercise content and return bounded numeric scores for the visible score fields only. "
-                            "Never invent extra fields. Never exceed the provided max scores. Return JSON only."
-                        )
-                    ),
-                    HumanMessage(
-                        content=f"""
+        system_prompt_text = (
+            "You are a deterministic Sanoma Pro exam grading engine. "
+            "Read the visible exercise content and return bounded numeric scores for the visible score fields only. "
+            "Never invent extra fields. Never exceed the provided max scores. Return JSON only."
+        )
+        human_prompt_text = f"""
 Teacher grading instructions:
 {rendered_instructions}
 
@@ -2809,7 +2950,7 @@ Student:
 {exercise_state.student_name or '-'} ({exercise_state.student_progress or '-'})
 
 Exercise:
-{exercise_state.exercise_label or '-'}
+{self._sanomapro_compact_exercise_label(exercise_state)}
 
 Question text:
 {exercise_state.question_text}
@@ -2843,12 +2984,37 @@ Requirements:
 JSON schema instructions:
 {parser.get_format_instructions()}
 """.strip()
-                    ),
+        base_audit = SanomaScoreDecisionAudit(
+            prompt_template_text=payload.instructions.strip(),
+            rendered_instructions_text=rendered_instructions,
+            system_prompt_text=system_prompt_text,
+            submitted_prompt_text=human_prompt_text,
+            model_provider=sanomapro_provider,
+            model_name=sanomapro_model,
+        )
+        if sanomapro_provider == "heuristic":
+            decision = await self._build_sanomapro_heuristic_score_decision(
+                score_request,
+                exercise_state,
+            )
+            self._store_last_sanomapro_score_audit(base_audit)
+            return decision
+        try:
+            model = build_explicit_grading_chat_model(
+                self.settings,
+                provider=sanomapro_provider,
+                model_name=sanomapro_model,
+                routing_tier="standard",
+            )
+            response = await model.ainvoke(
+                [
+                    SystemMessage(content=system_prompt_text),
+                    HumanMessage(content=human_prompt_text),
                 ]
             )
             text = flatten_llm_content(response.content)
         except Exception as exc:
-            return await self._build_sanomapro_heuristic_score_decision(
+            decision = await self._build_sanomapro_heuristic_score_decision(
                 score_request,
                 exercise_state,
                 summary_prefix=(
@@ -2856,21 +3022,49 @@ JSON schema instructions:
                     f"with {sanomapro_provider}/{sanomapro_model}: {exc}."
                 ),
             )
+            self._store_last_sanomapro_score_audit(
+                base_audit.model_copy(
+                    update={
+                        "used_heuristic_fallback": True,
+                        "fallback_reason": (
+                            "Managed grading request failed before a usable JSON response was produced: "
+                            f"{exc}"
+                        ),
+                    }
+                )
+            )
+            return decision
 
         decision = self._parse_sanomapro_score_decision_text(text, parser, exercise_state)
         if decision is not None:
+            self._store_last_sanomapro_score_audit(
+                base_audit.model_copy(
+                    update={
+                        "model_response_text": text,
+                    }
+                )
+            )
             return decision
 
-        repaired_decision = await self._repair_sanomapro_score_decision(
+        repair_result = await self._repair_sanomapro_score_decision(
             model=model,
             parser=parser,
             raw_text=text,
             exercise_state=exercise_state,
         )
-        if repaired_decision is not None:
-            return repaired_decision
+        if repair_result.decision is not None:
+            self._store_last_sanomapro_score_audit(
+                base_audit.model_copy(
+                    update={
+                        "model_response_text": text,
+                        "repair_prompt_text": repair_result.prompt_text,
+                        "repair_response_text": repair_result.response_text,
+                    }
+                )
+            )
+            return repair_result.decision
 
-        return await self._build_sanomapro_heuristic_score_decision(
+        decision = await self._build_sanomapro_heuristic_score_decision(
             score_request,
             exercise_state,
             summary_prefix=(
@@ -2878,6 +3072,20 @@ JSON schema instructions:
                 f"{sanomapro_provider}/{sanomapro_model} returned a non-JSON grading draft."
             ),
         )
+        self._store_last_sanomapro_score_audit(
+            base_audit.model_copy(
+                update={
+                    "model_response_text": text,
+                    "repair_prompt_text": repair_result.prompt_text,
+                    "repair_response_text": repair_result.response_text,
+                    "used_heuristic_fallback": True,
+                    "fallback_reason": (
+                        "The managed grading model returned text that could not be normalized into the required JSON schema."
+                    ),
+                }
+            )
+        )
+        return decision
 
     async def _apply_sanomapro_score_decision(
         self,
@@ -2941,6 +3149,7 @@ JSON schema instructions:
         loop_count = 0
         fully_reviewed = False
         interrupted = False
+        graceful_stop_requested = False
         report_entries: list[SanomaGradingReportEntry] = []
         report_path = self.exam_grading_report_path(job_id)
         summary = "No Sanoma Pro answers were processed."
@@ -2958,6 +3167,19 @@ JSON schema instructions:
         try:
             while loop_count < loop_budget:
                 loop_count += 1
+                if self._should_stop_grading():
+                    graceful_stop_requested = True
+                    summary = (
+                        f"Stopped grading gracefully at the user's request before the overview was fully reviewed."
+                    )
+                    steps.append(
+                        {
+                            "name": "graceful_stop",
+                            "status": "completed",
+                            "detail": summary,
+                        }
+                    )
+                    break
                 page = await browser_session.get_current_page()
                 if page is None:
                     summary = "Stopped because the managed browser no longer exposed an active page."
@@ -3166,13 +3388,16 @@ JSON schema instructions:
                             reasoning_text=self._sanomapro_reasoning_overlay_text(),
                         ),
                     )
+                    self._store_last_sanomapro_score_audit(None)
                     decision = await self._build_sanomapro_score_decision(payload, exercise_state)
+                    decision_audit = self.consume_last_sanomapro_score_audit()
                     report_entries.append(
                         self._sanomapro_report_entry(
                             exercise_state,
                             decision,
                             exercise_url=page_url,
                             dry_run=payload.dry_run,
+                            audit=decision_audit,
                         )
                     )
                     if decision.should_skip:
@@ -3234,6 +3459,23 @@ JSON schema instructions:
                                 ),
                             }
                         )
+
+                if self._should_stop_grading():
+                    graceful_stop_requested = True
+                    summary = (
+                        f"Stopped grading gracefully at the user's request after "
+                        f"{exercise_state.student_name or 'the current student'} "
+                        f"({exercise_state.student_progress or '-'}) in "
+                        f"{self._sanomapro_compact_exercise_label(exercise_state)}."
+                    )
+                    steps.append(
+                        {
+                            "name": "graceful_stop",
+                            "status": "completed",
+                            "detail": summary,
+                        }
+                    )
+                    break
 
                 at_last_student = False
                 if exercise_state.current_student_index is not None and exercise_state.student_count is not None:
@@ -3408,6 +3650,8 @@ JSON schema instructions:
         finally:
             if interrupted:
                 final_status = "needs_review"
+            elif graceful_stop_requested and not fully_reviewed:
+                final_status = "needs_review"
             elif fully_reviewed:
                 final_status = "completed" if skipped_answers == 0 else "needs_review"
             else:
@@ -3446,6 +3690,7 @@ JSON schema instructions:
             self._store_last_sanomapro_report_entries(job_id=job_id, entries=report_entries)
 
         final_page = await browser_session.get_current_page()
+        last_report_entry = report_entries[-1] if report_entries else None
         if final_page is not None:
             await self._set_browser_status_overlay(
                 final_page,
@@ -3462,8 +3707,20 @@ JSON schema instructions:
                     "Processed": processed_answers,
                     "Skipped": skipped_answers,
                     "Fields typed": filled_point_fields,
-                    "Student": last_student_name or "-",
-                    "Exercise": last_exercise_label or "-",
+                    "Ryhmä": (
+                        last_report_entry.group_name
+                        if last_report_entry and last_report_entry.group_name
+                        else self._last_sanomapro_group_name or "-"
+                    ),
+                    "Kategoria": last_report_entry.category_name if last_report_entry else "-",
+                    "Tehtävä": (
+                        self._sanomapro_compact_exercise_label_from_entry(last_report_entry)
+                        if last_report_entry is not None
+                        else last_exercise_label or "-"
+                    ),
+                    "Oppilas": last_student_name or (last_report_entry.student_name if last_report_entry else "-"),
+                    "Edistyminen": last_report_entry.student_progress if last_report_entry else "-",
+                    "Points": last_report_entry.points_text if last_report_entry else "-",
                 },
             )
 
@@ -3522,6 +3779,7 @@ JSON schema instructions:
         loop_count = 0
         interrupted = False
         fully_reviewed = False
+        graceful_stop_requested = False
         extracted_text: str | None = None
         report_entries: list[SanomaGradingReportEntry] = []
         report_path = self.exam_grading_report_path(job_id)
@@ -3597,6 +3855,20 @@ JSON schema instructions:
                             )
                             while loop_count < loop_budget:
                                 loop_count += 1
+                                if self._should_stop_grading():
+                                    graceful_stop_requested = True
+                                    summary = (
+                                        f"Stopped grading {selected_column_label or 'the selected exercise'} "
+                                        "gracefully at the user's request."
+                                    )
+                                    steps.append(
+                                        {
+                                            "name": "graceful_stop",
+                                            "status": "completed",
+                                            "detail": summary,
+                                        }
+                                    )
+                                    break
                                 page = await browser_session.get_current_page()
                                 if page is None:
                                     summary = "Stopped because the managed browser no longer exposed an active page."
@@ -3712,13 +3984,16 @@ JSON schema instructions:
                                             reasoning_text=self._sanomapro_reasoning_overlay_text(),
                                         ),
                                     )
+                                    self._store_last_sanomapro_score_audit(None)
                                     decision = await self._build_sanomapro_score_decision(payload, exercise_state)
+                                    decision_audit = self.consume_last_sanomapro_score_audit()
                                     report_entries.append(
                                         self._sanomapro_report_entry(
                                             exercise_state,
                                             decision,
                                             exercise_url=current_url,
                                             dry_run=payload.dry_run,
+                                            audit=decision_audit,
                                         )
                                     )
                                     if decision.should_skip:
@@ -3766,6 +4041,23 @@ JSON schema instructions:
                                         )
                                         processed_answers += 1
                                         summary = decision.summary
+
+                                if self._should_stop_grading():
+                                    graceful_stop_requested = True
+                                    summary = (
+                                        f"Stopped grading gracefully at the user's request after "
+                                        f"{exercise_state.student_name or 'the current student'} "
+                                        f"({exercise_state.student_progress or '-'}) in "
+                                        f"{selected_column_label or self._sanomapro_compact_exercise_label(exercise_state)}."
+                                    )
+                                    steps.append(
+                                        {
+                                            "name": "graceful_stop",
+                                            "status": "completed",
+                                            "detail": summary,
+                                        }
+                                    )
+                                    break
 
                                 at_last_student = False
                                 if exercise_state.current_student_index is not None and exercise_state.student_count is not None:
@@ -3912,6 +4204,8 @@ JSON schema instructions:
         finally:
             if interrupted:
                 final_status = "needs_review"
+            elif graceful_stop_requested and not fully_reviewed:
+                final_status = "needs_review"
             elif fully_reviewed:
                 final_status = "completed" if skipped_answers == 0 else "needs_review"
             else:
@@ -3950,6 +4244,7 @@ JSON schema instructions:
             self._store_last_sanomapro_report_entries(job_id=job_id, entries=report_entries)
 
         final_page = await browser_session.get_current_page()
+        last_report_entry = report_entries[-1] if report_entries else None
         if final_page is not None:
             await self._set_browser_status_overlay(
                 final_page,
@@ -3966,8 +4261,20 @@ JSON schema instructions:
                     "Processed": processed_answers,
                     "Skipped": skipped_answers,
                     "Fields typed": filled_point_fields,
-                    "Student": last_student_name or "-",
-                    "Exercise": last_exercise_label or selected_column_label or "-",
+                    "Ryhmä": (
+                        last_report_entry.group_name
+                        if last_report_entry and last_report_entry.group_name
+                        else self._last_sanomapro_group_name or "-"
+                    ),
+                    "Kategoria": last_report_entry.category_name if last_report_entry else "-",
+                    "Tehtävä": (
+                        self._sanomapro_compact_exercise_label_from_entry(last_report_entry)
+                        if last_report_entry is not None
+                        else last_exercise_label or selected_column_label or "-"
+                    ),
+                    "Oppilas": last_student_name or (last_report_entry.student_name if last_report_entry else "-"),
+                    "Edistyminen": last_report_entry.student_progress if last_report_entry else "-",
+                    "Points": last_report_entry.points_text if last_report_entry else "-",
                 },
             )
 

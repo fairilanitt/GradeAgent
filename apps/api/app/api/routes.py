@@ -183,6 +183,12 @@ def grade_gui_exercise(payload: GuiGradeExerciseRequest) -> GuiGradeExerciseResp
     )
 
 
+@router.post("/gui/exercises/stop", status_code=status.HTTP_204_NO_CONTENT)
+def stop_gui_exercise_grading() -> None:
+    runtime = get_gui_runtime()
+    runtime.request_stop_grading()
+
+
 @router.get("/gui/statistics", response_model=GuiStatisticsResponse)
 def get_gui_statistics() -> GuiStatisticsResponse:
     runtime = get_gui_runtime()

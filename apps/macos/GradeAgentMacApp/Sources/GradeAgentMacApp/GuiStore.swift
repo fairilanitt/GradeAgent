@@ -5,6 +5,7 @@ enum AppPage: String, CaseIterable, Identifiable {
     case ohjaus
     case kriteerit
     case tilastot
+    case lokit
 
     var id: String { rawValue }
 
@@ -16,6 +17,8 @@ enum AppPage: String, CaseIterable, Identifiable {
             return "Kriteerit"
         case .tilastot:
             return "Tilastot"
+        case .lokit:
+            return "Lokit"
         }
     }
 
@@ -27,6 +30,8 @@ enum AppPage: String, CaseIterable, Identifiable {
             return "books.vertical"
         case .tilastot:
             return "chart.xyaxis.line"
+        case .lokit:
+            return "text.justify"
         }
     }
 }
@@ -40,6 +45,7 @@ final class GuiStore: ObservableObject {
     @Published var overview: GuiOverviewResponse?
     @Published var statisticsRuns: [GuiStatisticsRun] = []
     @Published var selectedPromptByColumn: [String: String] = [:]
+    @Published var selectedExerciseColumnKey: String?
     @Published var selectedLibraryPromptId: String?
     @Published var draftPromptId: String?
     @Published var draftPromptTitle = ""
@@ -52,9 +58,11 @@ final class GuiStore: ObservableObject {
     @Published var isRefreshingOverview = false
     @Published var isAutoDetectingOverview = false
     @Published var gradingColumnKey: String?
+    @Published var isStopGradingRequested = false
     @Published var isSavingPrompt = false
     @Published var isLoadingInitialState = false
     @Published var latestErrorMessage: String?
+    @Published var statisticsErrorMessage: String?
 
     let promptPlaceholderHelp =
         "Tuetut paikkamerkit: (STUDENT), (PROGRESSION), (OBJECTIVE), (TARGET), (ANSWER), (MODELANSWER), (MAXPOINTS), (GROUP), (STUDENTS), (CATEGORY), (EXERCISE NUMBER). Vanhat paikkamerkit kuten (SWE PHRASE) ja (FIN ANSWER) toimivat edelleen."
@@ -115,11 +123,16 @@ final class GuiStore: ObservableObject {
         }
     }
 
+    var logEntryCount: Int {
+        statisticsEntryCount
+    }
+
     func loadInitialData() async {
         isLoadingInitialState = true
         defer { isLoadingInitialState = false }
 
-        var loadErrors: [String] = []
+        var criticalLoadErrors: [String] = []
+        statisticsErrorMessage = nil
 
         do {
             let resolvedState = try await apiClient.state()
@@ -129,7 +142,7 @@ final class GuiStore: ObservableObject {
                 statusMessage = "Selain on jo käynnissä. Siirry Sanoman kokeen yleisnäkymään, niin tehtävät tunnistetaan automaattisesti."
             }
         } catch {
-            loadErrors.append(error.localizedDescription)
+            criticalLoadErrors.append(error.localizedDescription)
         }
 
         do {
@@ -137,21 +150,23 @@ final class GuiStore: ObservableObject {
             prompts = resolvedPrompts
             syncDraftSelection()
         } catch {
-            loadErrors.append(error.localizedDescription)
+            criticalLoadErrors.append(error.localizedDescription)
         }
 
         do {
             let resolvedStatistics = try await apiClient.statistics()
             statisticsRuns = resolvedStatistics.runs
         } catch {
-            loadErrors.append(error.localizedDescription)
+            statisticsErrorMessage = error.localizedDescription
         }
 
-        if !loadErrors.isEmpty {
-            latestErrorMessage = loadErrors.joined(separator: " | ")
+        if !criticalLoadErrors.isEmpty {
+            latestErrorMessage = criticalLoadErrors.joined(separator: " | ")
             if prompts.isEmpty {
                 statusMessage = "Paikalliseen GUI-palvelimeen ei saatu yhteyttä."
             }
+        } else {
+            latestErrorMessage = nil
         }
 
         updateAutomaticOverviewDetection()
@@ -170,6 +185,8 @@ final class GuiStore: ObservableObject {
             sessionId = response.sessionId
             overview = nil
             selectedPromptByColumn = [:]
+            selectedExerciseColumnKey = nil
+            isStopGradingRequested = false
             statusMessage = "Selain on auki. Siirry Sanoman kokeen yleisnäkymään, niin tehtävät ilmestyvät tähän automaattisesti."
             resultMessage = "Selaimen istunto on valmis: \(response.sessionId)"
             updateAutomaticOverviewDetection()
@@ -205,6 +222,8 @@ final class GuiStore: ObservableObject {
             sessionId = response.sessionId
             overview = nil
             selectedPromptByColumn = [:]
+            selectedExerciseColumnKey = nil
+            isStopGradingRequested = false
             isAutoDetectingOverview = false
             overviewAutoDetectionTask?.cancel()
             overviewAutoDetectionTask = nil
@@ -219,15 +238,23 @@ final class GuiStore: ObservableObject {
     func gradeExercise(_ exercise: GuiExerciseColumn) async {
         await ensurePromptsLoadedIfNeeded()
         guard gradingColumnKey == nil else { return }
+        guard selectedExerciseColumnKey == exercise.columnKey else {
+            latestErrorMessage = "Valitse ensin tehtäväkortti, jonka haluat arvioida."
+            return
+        }
         guard let prompt = selectedPrompt(for: exercise) else {
             latestErrorMessage = "Valitse tehtävälle kriteeri ennen arvioinnin käynnistystä."
             return
         }
 
         gradingColumnKey = exercise.columnKey
+        isStopGradingRequested = false
         latestErrorMessage = nil
         statusMessage = "Arvioidaan tehtävää '\(exercise.title)' kriteerillä '\(prompt.title)'..."
-        defer { gradingColumnKey = nil }
+        defer {
+            gradingColumnKey = nil
+            isStopGradingRequested = false
+        }
 
         do {
             let response = try await apiClient.gradeExercise(
@@ -247,15 +274,34 @@ final class GuiStore: ObservableObject {
                 exercises: response.exercises
             )
             syncExercisePromptSelections()
+            selectedExerciseColumnKey = nil
             if let refreshedStatistics = try? await apiClient.statistics() {
                 statisticsRuns = refreshedStatistics.runs
             }
-            statusMessage = "Selain on yhä auki. Valitse seuraava tehtävä, kun haluat jatkaa."
+            statusMessage = isStopGradingRequested
+                ? "Arviointi pysäytettiin hallitusti. Selain on yhä auki seuraavaa valintaa varten."
+                : "Selain on yhä auki. Valitse seuraava tehtävä, kun haluat jatkaa."
             let reportPart = response.result.reportPath.map { " Raportti: \($0)" } ?? ""
             resultMessage = response.result.summary + reportPart
         } catch {
             latestErrorMessage = error.localizedDescription
-            statusMessage = "Tehtävän arviointi epäonnistui."
+            statusMessage = isStopGradingRequested ? "Arvioinnin pysäytyspyyntö epäonnistui." : "Tehtävän arviointi epäonnistui."
+        }
+    }
+
+    func stopCurrentGrading() async {
+        guard gradingColumnKey != nil else { return }
+        guard !isStopGradingRequested else { return }
+        latestErrorMessage = nil
+        isStopGradingRequested = true
+        statusMessage = "Pysäytyspyyntö lähetetty. Nykyinen arviointivaihe päätetään hallitusti ennen pysähtymistä."
+
+        do {
+            try await apiClient.stopGrading()
+        } catch {
+            isStopGradingRequested = false
+            latestErrorMessage = error.localizedDescription
+            statusMessage = "Arvioinnin pysäytyspyyntö epäonnistui."
         }
     }
 
@@ -263,8 +309,9 @@ final class GuiStore: ObservableObject {
         do {
             let response = try await apiClient.statistics()
             statisticsRuns = response.runs
+            statisticsErrorMessage = nil
         } catch {
-            latestErrorMessage = error.localizedDescription
+            statisticsErrorMessage = error.localizedDescription
         }
     }
 
@@ -310,6 +357,22 @@ final class GuiStore: ObservableObject {
             applyOverviewResponse(response, source: .automatic)
             latestErrorMessage = nil
         } catch {
+            if let resolvedState = try? await apiClient.state() {
+                browserReady = resolvedState.browserReady
+                sessionId = resolvedState.sessionId
+                if !resolvedState.browserReady {
+                    overview = nil
+                    selectedPromptByColumn = [:]
+                    selectedExerciseColumnKey = nil
+                    isAutoDetectingOverview = false
+                    overviewAutoDetectionTask?.cancel()
+                    overviewAutoDetectionTask = nil
+                    latestErrorMessage = nil
+                    statusMessage = "Selainyhteys katkesi. Käynnistä selain uudelleen vihreästä painikkeesta."
+                    resultMessage = "Edellinen selainistunto ei ole enää käytettävissä."
+                    return
+                }
+            }
             if overview == nil {
                 statusMessage = "Selain on auki. Siirry Sanoman kokeen yleisnäkymään, niin tehtävät ilmestyvät tähän automaattisesti."
             }
@@ -407,6 +470,11 @@ final class GuiStore: ObservableObject {
         selectedPromptByColumn[columnKey] = promptId
     }
 
+    func selectExercise(_ exercise: GuiExerciseColumn) {
+        selectedExerciseColumnKey = exercise.columnKey
+        latestErrorMessage = nil
+    }
+
     func selectedPrompt(for exercise: GuiExerciseColumn) -> GuiPromptTemplate? {
         let selectedId = selectedPromptByColumn[exercise.columnKey]
         return prompts.first(where: { $0.promptId == selectedId }) ?? prompts.first
@@ -414,6 +482,10 @@ final class GuiStore: ObservableObject {
 
     func isGrading(_ exercise: GuiExerciseColumn) -> Bool {
         gradingColumnKey == exercise.columnKey
+    }
+
+    func isSelected(_ exercise: GuiExerciseColumn) -> Bool {
+        selectedExerciseColumnKey == exercise.columnKey
     }
 
     func shutdown() async {
@@ -443,6 +515,9 @@ final class GuiStore: ObservableObject {
             }
         }
         selectedPromptByColumn = updatedSelection
+        if let selectedExerciseColumnKey, updatedSelection[selectedExerciseColumnKey] == nil {
+            self.selectedExerciseColumnKey = nil
+        }
     }
 
     private var filteredPrompts: [GuiPromptTemplate] {

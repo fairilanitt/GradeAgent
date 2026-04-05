@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -46,6 +47,7 @@ class GuiRuntime:
         self._browser_session = None
         self._session_id: str | None = None
         self._last_overview_state: SanomaOverviewState | None = None
+        self._active_grading_future: concurrent.futures.Future | None = None
         self._closed = False
 
     @property
@@ -65,12 +67,18 @@ class GuiRuntime:
         return future.result()
 
     def state(self) -> dict[str, object]:
+        self._clear_dead_browser_session_if_needed()
         prompts = self.prompt_templates()
         return {
             "browser_ready": self.has_browser_session,
             "session_id": self._session_id,
             "prompt_count": len(prompts),
         }
+
+    @property
+    def grading_active(self) -> bool:
+        with self._lock:
+            return self._active_grading_future is not None and not self._active_grading_future.done()
 
     def prompt_templates(self) -> list[PromptTemplate]:
         return self.prompt_library.load_prompts()
@@ -103,6 +111,7 @@ class GuiRuntime:
         return self.prompt_library.save_prompt(prompt)
 
     def ensure_browser_started(self) -> str:
+        self._clear_dead_browser_session_if_needed()
         with self._lock:
             if self._browser_session is not None and self._session_id:
                 return self._session_id
@@ -113,10 +122,11 @@ class GuiRuntime:
             return session_id
 
     def refresh_overview(self) -> SanomaOverviewState:
+        self._clear_dead_browser_session_if_needed()
         with self._lock:
             if self._browser_session is None:
                 raise RuntimeError("Käynnistä GradeAgent-selain ensin.")
-            overview_state = self._call(self.service.inspect_sanomapro_overview(self._browser_session))
+            overview_state = self._call(self.service.inspect_sanomapro_overview_passively(self._browser_session))
             self._last_overview_state = overview_state
             return overview_state
 
@@ -150,23 +160,39 @@ class GuiRuntime:
         prompt_title: str | None = None,
         max_steps: int = 260,
     ) -> tuple[ExamSessionGradingTaskResult, SanomaOverviewState]:
+        self._clear_dead_browser_session_if_needed()
         with self._lock:
             if self._browser_session is None:
                 raise RuntimeError("Käynnistä GradeAgent-selain ensin.")
+            if self._active_grading_future is not None and not self._active_grading_future.done():
+                raise RuntimeError("Arviointi on jo käynnissä. Pysäytä nykyinen ajo ennen uuden aloittamista.")
 
             overview_context = self._last_overview_state
             payload = ExamSessionGradingTaskCreate(
                 instructions=instructions.strip(),
                 max_steps=max_steps,
             )
-            result = self._call(
+            self.service.clear_stop_grading_request()
+            future = asyncio.run_coroutine_threadsafe(
                 self.service.grade_sanomapro_exercise_column_from_current_page(
                     payload=payload,
                     job_id=str(uuid4()),
                     browser_session=self._browser_session,
                     column_key=column_key,
-                )
+                ),
+                self._loop,
             )
+            self._active_grading_future = future
+
+        try:
+            result = future.result()
+        finally:
+            self.service.clear_stop_grading_request()
+            with self._lock:
+                if self._active_grading_future is future:
+                    self._active_grading_future = None
+
+        with self._lock:
             report_entries = self.service.consume_last_sanomapro_report_entries(result.job_id)
             overview_state = self._call(self.service.inspect_sanomapro_overview(self._browser_session))
             self._last_overview_state = overview_state
@@ -179,6 +205,13 @@ class GuiRuntime:
                 report_entries=report_entries,
             )
             return result, overview_state
+
+    def request_stop_grading(self) -> None:
+        with self._lock:
+            active_future = self._active_grading_future
+        if active_future is None or active_future.done():
+            return
+        self.service.request_stop_grading()
 
     def _record_statistics_run(
         self,
@@ -245,6 +278,41 @@ class GuiRuntime:
         )
         self.statistics_store.append_run(record)
 
+    def _detach_browser_session_locked(self) -> tuple[object | None, str | None]:
+        browser_session = self._browser_session
+        session_id = self._session_id
+        self._browser_session = None
+        self._session_id = None
+        self._last_overview_state = None
+        return browser_session, session_id
+
+    def _cleanup_detached_browser_session(self, browser_session, session_id: str | None) -> None:
+        try:
+            if browser_session is not None:
+                self._call(browser_session.kill())
+        except Exception:
+            pass
+        if session_id:
+            self.service.cleanup_browser_artifacts(current_job_id=session_id)
+
+    def _browser_session_is_usable(self, browser_session) -> bool:
+        try:
+            self._call(self.service.list_open_tabs(browser_session))
+            return True
+        except Exception:
+            return False
+
+    def _clear_dead_browser_session_if_needed(self) -> None:
+        browser_session = None
+        session_id: str | None = None
+        with self._lock:
+            if self._browser_session is None:
+                return
+            if self._browser_session_is_usable(self._browser_session):
+                return
+            browser_session, session_id = self._detach_browser_session_locked()
+        self._cleanup_detached_browser_session(browser_session, session_id)
+
     def _map_statistics_entry(self, entry: SanomaGradingReportEntry) -> GuiStatisticsEntry:
         return GuiStatisticsEntry(
             student_name=entry.student_name,
@@ -263,6 +331,16 @@ class GuiRuntime:
             score_awarded=entry.score_awarded,
             score_possible=entry.score_possible,
             basis_lines=list(entry.basis_lines),
+            prompt_template_text=entry.prompt_template_text,
+            rendered_instructions_text=entry.rendered_instructions_text,
+            submitted_prompt_text=entry.submitted_prompt_text,
+            model_provider=entry.model_provider,
+            model_name=entry.model_name,
+            model_response_text=entry.model_response_text,
+            repair_prompt_text=entry.repair_prompt_text,
+            repair_response_text=entry.repair_response_text,
+            used_heuristic_fallback=entry.used_heuristic_fallback,
+            fallback_reason=entry.fallback_reason,
             exercise_url=entry.exercise_url,
             status=entry.status,
         )
@@ -274,12 +352,17 @@ class GuiRuntime:
 
             browser_session = self._browser_session
             session_id = self._session_id
+            active_future = self._active_grading_future
             self._browser_session = None
             self._session_id = None
             self._last_overview_state = None
+            self._active_grading_future = None
             self._closed = True
 
         try:
+            self.service.request_stop_grading()
+            if active_future is not None:
+                active_future.cancel()
             if browser_session is not None:
                 self._call(browser_session.kill())
         finally:

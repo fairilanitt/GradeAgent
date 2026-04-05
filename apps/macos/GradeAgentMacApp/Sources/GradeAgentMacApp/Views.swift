@@ -302,24 +302,37 @@ struct HeroDashboardView: View {
             .frame(maxWidth: compact ? .infinity : 720, alignment: .leading)
 
             if store.selectedPage == .ohjaus {
-                HStack(spacing: 10) {
-                    Button {
-                        Task { await store.startBrowser() }
-                    } label: {
-                        Image(systemName: "play.fill")
+                AdaptiveAxisStack(horizontal: !compact, spacing: 10) {
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await store.startBrowser() }
+                        } label: {
+                            Image(systemName: "play.fill")
+                        }
+                        .help("Käynnistä selain")
+                        .buttonStyle(CircularActionButtonStyle(tint: Color(hex: "#7E9487")))
+                        .disabled(store.isStartingBrowser || store.browserReady)
+
+                        Button {
+                            Task { await store.stopBrowser() }
+                        } label: {
+                            Image(systemName: "stop.fill")
+                        }
+                        .help("Pysäytä selain")
+                        .buttonStyle(CircularActionButtonStyle(tint: Color(hex: "#9A7B7B")))
+                        .disabled(!store.browserReady)
                     }
-                    .help("Käynnistä selain")
-                    .buttonStyle(CircularActionButtonStyle(tint: Color(hex: "#7E9487")))
-                    .disabled(store.isStartingBrowser || store.browserReady)
 
                     Button {
-                        Task { await store.stopBrowser() }
+                        Task { await store.stopCurrentGrading() }
                     } label: {
-                        Image(systemName: "stop.fill")
+                        Label(
+                            store.isStopGradingRequested ? "Pysäytetään arviointi..." : "Pysäytä arviointi",
+                            systemImage: store.isStopGradingRequested ? "hourglass" : "pause.circle.fill"
+                        )
                     }
-                    .help("Pysäytä selain")
-                    .buttonStyle(CircularActionButtonStyle(tint: Color(hex: "#9A7B7B")))
-                    .disabled(!store.browserReady)
+                    .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#A08A78")))
+                    .disabled(store.gradingColumnKey == nil || store.isStopGradingRequested)
                 }
                 .frame(maxWidth: compact ? .infinity : nil, alignment: compact ? .leading : .trailing)
                 .padding(.top, compact ? 0 : 6)
@@ -408,6 +421,33 @@ struct PromptPreviewView: View {
                     .stroke(Color.white.opacity(0.14), lineWidth: 1)
             )
         }
+    }
+}
+
+struct ExerciseInfoLine: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.56))
+
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.90))
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        )
     }
 }
 

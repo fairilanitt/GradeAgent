@@ -66,6 +66,8 @@ struct RootView: View {
                                 CriteriaPageView(compact: compactWindow)
                             case .tilastot:
                                 StatisticsPageView(compact: compactWindow)
+                            case .lokit:
+                                LogsPageView(compact: compactWindow)
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -172,18 +174,19 @@ struct ControlPageView: View {
 
                     AdaptiveAxisStack(horizontal: !compact, spacing: 10) {
                         if let overview = store.overview {
+                            MiniInfoPill(label: "Koe", value: overview.assignmentTitle)
                             MiniInfoPill(label: "Ryhmä", value: overview.groupName ?? "-")
                             if let answered = overview.studentsAnsweredCount,
                                let total = overview.studentsTotalCount {
                                 MiniInfoPill(label: "Oppilaat", value: "\(answered) / \(total)")
                             }
                         }
-                        if store.browserReady {
-                            MiniInfoPill(
-                                label: "Tunnistus",
-                                value: store.isAutoDetectingOverview ? "Automaattinen haku päällä" : "Odottaa selainta"
-                            )
-                        }
+                        MiniInfoPill(
+                            label: "Tunnistus",
+                            value: store.browserReady
+                                ? (store.isAutoDetectingOverview ? "Automaattinen haku päällä" : "Odottaa yleisnäkymää")
+                                : "Selain ei ole auki"
+                        )
                         MiniInfoPill(label: "Tila", value: store.latestErrorMessage ?? store.resultMessage)
                     }
 
@@ -193,9 +196,16 @@ struct ControlPageView: View {
 
                 if let exercises = store.overview?.exercises, !exercises.isEmpty {
                     ScrollView {
-                        LazyVStack(spacing: 14) {
+                        LazyVGrid(
+                            columns: [
+                                GridItem(.adaptive(minimum: compact ? 220 : 250, maximum: compact ? 250 : 290), spacing: 14, alignment: .top)
+                            ],
+                            alignment: .leading,
+                            spacing: 14
+                        ) {
                             ForEach(exercises) { exercise in
                                 ExerciseCardView(exercise: exercise)
+                                    .frame(maxWidth: .infinity, minHeight: compact ? 250 : 276, alignment: .topLeading)
                             }
                         }
                         .padding(.bottom, 6)
@@ -220,32 +230,32 @@ struct ExerciseCardView: View {
     let exercise: GuiExerciseColumn
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(exercise.title)
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
+                        .lineLimit(2)
 
-                    Text(detailLine)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.74))
+                    if let categoryName = exercise.categoryName {
+                        PromptTag(title: categoryName)
+                    }
                 }
 
-                Spacer(minLength: 18)
+                Spacer(minLength: 0)
 
-                Button {
-                    Task { await store.gradeExercise(exercise) }
-                } label: {
-                    Image(systemName: store.isGrading(exercise) ? "hourglass" : "sparkles")
-                }
-                .help("Aloita arviointi")
-                .buttonStyle(CircularActionButtonStyle(tint: Color(hex: "#0A84FF")))
-                .disabled(store.isGrading(exercise) || !store.hasPrompts)
+                PromptTag(title: store.isSelected(exercise) ? "Valittu" : "Valitse")
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Valittu kriteeri")
+                ExerciseInfoLine(label: "Tehtävänumero", value: exercise.exerciseNumber ?? "-")
+                ExerciseInfoLine(label: "Arvioimatta", value: "\(exercise.pendingCellCount) / \(exercise.totalCellCount)")
+                ExerciseInfoLine(label: "Valmiina", value: "\(exercise.reviewedCellCount) / \(exercise.totalCellCount)")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Kriteeri")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.9))
 
@@ -257,29 +267,49 @@ struct ExerciseCardView: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .tint(.white)
+
+                Text(store.selectedPrompt(for: exercise)?.title ?? "Valitse kriteeri")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.74))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            PromptPreviewView(prompt: store.selectedPrompt(for: exercise))
+            Spacer(minLength: 0)
+
+            Button {
+                Task { await store.gradeExercise(exercise) }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: store.isGrading(exercise) ? "hourglass" : "play.fill")
+                    Text(
+                        store.isGrading(exercise)
+                            ? "Arvioidaan..."
+                            : store.isSelected(exercise) ? "Aloita arviointi" : "Valitse tehtävä ensin"
+                    )
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#6F937C")))
+            .disabled(store.isGrading(exercise) || !store.hasPrompts || !store.isSelected(exercise))
         }
-        .padding(18)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color.white.opacity(0.08))
+                .fill(store.isSelected(exercise) ? Color.white.opacity(0.13) : Color.white.opacity(0.08))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(
+                    store.isSelected(exercise) ? Color.white.opacity(0.26) : Color.white.opacity(0.12),
+                    lineWidth: store.isSelected(exercise) ? 1.3 : 1
+                )
         )
-    }
-
-    private var detailLine: String {
-        let details = [
-            exercise.categoryName.map { "Kategoria: \($0)" },
-            exercise.exerciseNumber.map { "Tehtävänumero: \($0)" },
-            "Arvioimatta \(exercise.pendingCellCount)/\(exercise.totalCellCount)",
-            "Valmiina \(exercise.reviewedCellCount)/\(exercise.totalCellCount)",
-        ]
-        return details.compactMap { $0 }.joined(separator: " · ")
+        .padding(18)
+        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .onTapGesture {
+            store.selectExercise(exercise)
+        }
     }
 
     private var bindingForPromptSelection: Binding<String> {

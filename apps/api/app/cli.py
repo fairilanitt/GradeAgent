@@ -114,6 +114,14 @@ def _gui_backend_state_url() -> str:
     return f"{_gui_backend_base_url()}/gui/state"
 
 
+def _gui_backend_prompts_url() -> str:
+    return f"{_gui_backend_base_url()}/gui/prompts"
+
+
+def _gui_backend_statistics_url() -> str:
+    return f"{_gui_backend_base_url()}/gui/statistics"
+
+
 def _swiftui_executable_path() -> Path:
     return _swiftui_package_dir() / ".build" / "debug" / "GradeAgentMacApp"
 
@@ -145,6 +153,91 @@ def _gui_backend_healthcheck_ready(timeout_seconds: float = 1.0) -> bool:
         return False
 
 
+def _gui_backend_route_ready(url: str, timeout_seconds: float = 1.0) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
+            return response.status == 200
+    except (urllib.error.URLError, TimeoutError):
+        return False
+
+
+def _gui_backend_is_compatible(timeout_seconds: float = 1.0) -> bool:
+    required_urls = (
+        _gui_backend_state_url(),
+        _gui_backend_prompts_url(),
+        _gui_backend_statistics_url(),
+    )
+    return all(_gui_backend_route_ready(url, timeout_seconds=timeout_seconds) for url in required_urls)
+
+
+def _terminate_gui_backend_process() -> bool:
+    try:
+        lookup = subprocess.run(
+            [
+                "lsof",
+                "-nP",
+                f"-iTCP:{GUI_API_PORT}",
+                "-sTCP:LISTEN",
+                "-Fp",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+
+    pids = [line[1:] for line in lookup.stdout.splitlines() if line.startswith("p") and line[1:].isdigit()]
+    terminated = False
+    for pid in pids:
+        try:
+            command_lookup = subprocess.run(
+                ["ps", "-p", pid, "-o", "command="],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            command = command_lookup.stdout.strip()
+            if "uvicorn app.gui_server:app" not in command:
+                continue
+            os.kill(int(pid), signal.SIGTERM)
+            terminated = True
+        except Exception:
+            continue
+    return terminated
+
+
+def _shutdown_incompatible_gui_backend() -> bool:
+    shutdown_request = urllib.request.Request(
+        f"{_gui_backend_base_url()}/gui/shutdown",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(shutdown_request, timeout=2.0):
+            pass
+    except Exception:
+        pass
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if not _gui_backend_healthcheck_ready(timeout_seconds=0.5):
+            return True
+        time.sleep(0.2)
+
+    terminated = _terminate_gui_backend_process()
+    if not terminated:
+        return False
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if not _gui_backend_healthcheck_ready(timeout_seconds=0.5):
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def _wait_for_gui_backend(timeout_seconds: float = 20.0) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -171,8 +264,14 @@ def _read_gui_backend_log_tail(max_chars: int = 4000) -> str:
 
 
 def _ensure_gui_backend_running() -> None:
-    if _gui_backend_is_ready():
+    if _gui_backend_is_compatible():
         return
+    if _gui_backend_is_ready() or _gui_backend_healthcheck_ready():
+        if not _shutdown_incompatible_gui_backend():
+            raise RuntimeError(
+                f"An incompatible GradeAgent GUI backend is already running at {_gui_backend_base_url()}. "
+                "Stop it and try again."
+            )
     if _gui_backend_healthcheck_ready():
         raise RuntimeError(
             f"An API server is already running at {_gui_backend_base_url()}, but it does not expose the SwiftUI GUI routes. "
@@ -204,7 +303,7 @@ def _ensure_gui_backend_running() -> None:
 
     deadline = time.time() + 30.0
     while time.time() < deadline:
-        if _gui_backend_is_ready():
+        if _gui_backend_is_compatible():
             return
         if backend_process.poll() is not None:
             log_tail = _read_gui_backend_log_tail()

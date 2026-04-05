@@ -77,6 +77,10 @@ actor GuiAPIClient {
         try await post("gui/exercises/grade", body: request)
     }
 
+    func stopGrading() async throws {
+        try await postNoContent("gui/exercises/stop", body: EmptyPayload())
+    }
+
     func statistics() async throws -> GuiStatisticsResponse {
         try await get("gui/statistics")
     }

@@ -884,11 +884,20 @@ def test_write_sanomapro_grading_report_includes_student_answers_basis_and_links
                 student_name="Aada Harri",
                 student_progress="Oppilas 6/31",
                 exercise_label="Tehtävä 4",
+                group_name="Katjas grupp RUB14.7",
+                category_name="Text 4",
+                exercise_number="4",
+                objective_text="Käännä lause suomeksi.",
+                target_text="Tycker du att det är möjligt att påverka?",
                 question_text="Käännä lause suomeksi.",
                 answer_text="Pidätkö sinä enemmän ja saada nuorten äänet kuuluviin?",
                 model_answer_text="Onko sinusta mahdollista vaikuttaa ja saada nuorten äänet kuuluviin?",
                 points_text="1 / 2",
                 basis_lines=["Summary: Meaning partly matches.", "Field 1: Multiple wording errors."],
+                submitted_prompt_text="Teacher grading instructions:\nPrompt body",
+                model_provider="vertex_ai",
+                model_name="gemini-3.1-pro-preview",
+                model_response_text="Grade: 1 / 2 points",
                 exercise_url="https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise?studentId=123",
                 status="scored",
             )
@@ -901,6 +910,14 @@ def test_write_sanomapro_grading_report_includes_student_answers_basis_and_links
     assert "Answer: Pidätkö sinä enemmän ja saada nuorten äänet kuuluviin?" in report_text
     assert "Model Answer: Onko sinusta mahdollista vaikuttaa ja saada nuorten äänet kuuluviin?" in report_text
     assert "Points: 1 / 2" in report_text
+    assert "Group: Katjas grupp RUB14.7" in report_text
+    assert "Category: Text 4" in report_text
+    assert "Exercise number: 4" in report_text
+    assert "Model used: vertex_ai / gemini-3.1-pro-preview" in report_text
+    assert "Submitted prompt:" in report_text
+    assert "Teacher grading instructions:" in report_text
+    assert "Model response:" in report_text
+    assert "Grade: 1 / 2 points" in report_text
     assert "Points basis:" in report_text
     assert "Field 1: Multiple wording errors." in report_text
     assert "https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise?studentId=123" in report_text
@@ -1525,10 +1542,16 @@ def test_build_sanomapro_score_decision_includes_dom_detected_two_point_policy(m
             exercise_state,
         )
     )
+    audit = service.consume_last_sanomapro_score_audit()
 
     prompt_text = model.messages[1].content
 
     assert decision.scores[0].score == 1.5
+    assert audit is not None
+    assert audit.model_provider == "vertex_ai"
+    assert audit.model_name == "gemini-3.1-pro-preview"
+    assert audit.submitted_prompt_text == prompt_text
+    assert "Minor punctuation issue." in audit.model_response_text
     assert "Detected scoring profile from DOM:" in prompt_text
     assert "single_score_max_2" in prompt_text
     assert "give 1/2" in prompt_text
@@ -1688,11 +1711,16 @@ def test_build_sanomapro_score_decision_falls_back_when_model_returns_non_json(m
             exercise_state,
         )
     )
+    audit = service.consume_last_sanomapro_score_audit()
 
     assert decision.should_skip is False
     assert len(decision.scores) == 1
     assert 0 <= decision.scores[0].score <= 4
     assert "Heuristic fallback applied" in decision.summary
+    assert audit is not None
+    assert audit.used_heuristic_fallback is True
+    assert "This answer deserves 4 points because it is correct." in audit.model_response_text
+    assert audit.model_name == "gemini-3.1-pro-preview"
 
 
 def test_grade_exam_from_current_page_uses_sanomapro_autonomy(monkeypatch, tmp_path) -> None:
@@ -1938,3 +1966,121 @@ def test_run_sanomapro_single_exercise_flow_grades_only_selected_column(monkeypa
     assert next_student_calls == ["Oppilas 1/2"]
     assert exited_to_overview == [exercise_url]
     assert "Text 1 / 1" in result.summary
+
+
+def test_run_sanomapro_single_exercise_flow_stops_gracefully_before_next_student(monkeypatch, tmp_path) -> None:
+    service = BrowserNavigationService(Settings())
+    overview_url = "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+    exercise_url = "https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/doc-1/exercise"
+    page = StubInteractivePage(overview_url)
+    session = StubInteractiveBrowserSession(page)
+    stop_requested = {"value": False}
+    next_student_calls: list[str] = []
+
+    exercise_state = SanomaExerciseState(
+        route="/as/teacher/review/demo/activity/a/document/doc-1/exercise",
+        assignment_title="Demo exam",
+        student_name="Ada",
+        student_progress="Oppilas 1/2",
+        current_student_index=1,
+        student_count=2,
+        exercise_label="Text 1 / 1",
+        current_section_name="Text 1",
+        current_progress_document_label="1",
+        current_progress_document_selector_index=0,
+        next_progress_document_selector_index=1,
+        next_progress_document_label="Text 1 / 2",
+        question_text="Q1",
+        answer_text="A1",
+        model_answer_text="M1",
+        score_fields=[SanomaExerciseScoreField(index=0, max_score=2)],
+        previous_student_available=False,
+        next_student_available=True,
+        exit_available=True,
+    )
+
+    async def fake_current_page_url(browser_session):
+        return page.url
+
+    async def fake_set_overlay(*args, **kwargs):
+        return None
+
+    async def fake_capture_page_state(browser_session, fallback_url, screenshot_path):
+        return page.url, "Exercise"
+
+    async def fake_extract_overview_state(current_page):
+        return SanomaOverviewState(
+            route="/as/teacher/assignment/demo/review",
+            assignment_title="Demo exam",
+            visible_cell_count=2,
+            reviewed_cell_count=0,
+            unreviewed_cell_count=2,
+            fully_reviewed=False,
+            pending_candidates=[{"selector_index": 0, "score_text": "- / 2", "candidate_key": "0:- / 2"}],
+            exercise_columns=[
+                SanomaOverviewExerciseColumn(
+                    column_key="exercise-column-0",
+                    column_index=0,
+                    label="Text 1 / 1",
+                    total_cell_count=2,
+                    reviewed_cell_count=0,
+                    pending_cell_count=2,
+                    first_pending_selector_index=0,
+                )
+            ],
+        )
+
+    async def fake_open_column(page_obj, current_url, column):
+        page.url = exercise_url
+        session.current_page_url = exercise_url
+        return True
+
+    async def fake_ensure_score_fields_visible(current_page, current_url):
+        return True
+
+    async def fake_extract_exercise_state(current_page):
+        return exercise_state
+
+    async def fake_build_score_decision(payload, state):
+        return SanomaScoreDecision(
+            summary="Scored Ada",
+            confidence=0.92,
+            scores=[SanomaScoreDecisionField(index=0, score=2, rationale="Matches the model answer.")],
+        )
+
+    async def fake_apply_score(page_obj, current_url, state, decision, *, dry_run):
+        stop_requested["value"] = True
+        return 1
+
+    async def fake_next_student(page_obj, current_url):
+        next_student_calls.append(current_url)
+        return True
+
+    monkeypatch.setattr(service, "get_current_page_url", fake_current_page_url)
+    monkeypatch.setattr(service, "_should_stop_grading", lambda: stop_requested["value"])
+    monkeypatch.setattr(service, "_set_browser_status_overlay", fake_set_overlay)
+    monkeypatch.setattr(service, "_capture_page_state", fake_capture_page_state)
+    monkeypatch.setattr(service, "_extract_sanomapro_overview_state", fake_extract_overview_state)
+    monkeypatch.setattr(service, "_open_sanomapro_overview_column", fake_open_column)
+    monkeypatch.setattr(service, "_ensure_sanomapro_score_fields_visible", fake_ensure_score_fields_visible)
+    monkeypatch.setattr(service, "_extract_sanomapro_exercise_state", fake_extract_exercise_state)
+    monkeypatch.setattr(service, "_build_sanomapro_score_decision", fake_build_score_decision)
+    monkeypatch.setattr(service, "_apply_sanomapro_score_decision", fake_apply_score)
+    monkeypatch.setattr(service, "_go_to_next_sanomapro_student", fake_next_student)
+
+    result = asyncio.run(
+        service._run_sanomapro_single_exercise_flow(
+            ExamSessionGradingTaskCreate(instructions="Score the answer."),
+            "job-single-exercise-stop",
+            session,
+            current_url=overview_url,
+            provider="ollama",
+            screenshot_path=tmp_path / "result.png",
+            column_key="exercise-column-0",
+        )
+    )
+
+    assert result.status == "needs_review"
+    assert result.processed_answers == 1
+    assert next_student_calls == []
+    assert "Stopped grading gracefully at the user's request" in result.summary

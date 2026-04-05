@@ -279,6 +279,16 @@ class GuiStatisticsEntry(BaseModel):
     score_awarded: float | None = None
     score_possible: float | None = None
     basis_lines: list[str] = Field(default_factory=list)
+    prompt_template_text: str = ""
+    rendered_instructions_text: str = ""
+    submitted_prompt_text: str = ""
+    model_provider: str | None = None
+    model_name: str | None = None
+    model_response_text: str = ""
+    repair_prompt_text: str = ""
+    repair_response_text: str = ""
+    used_heuristic_fallback: bool = False
+    fallback_reason: str = ""
     exercise_url: str = ""
     status: str = "scored"
 
