@@ -1,0 +1,286 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.GradeAgentMacApp-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/sources",
+      "importPath" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GradeAgentMacApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiAPIClient.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiStore.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Models.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/StatisticsViews.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Views.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "GradeAgentMacApp",
+      "moduleOutputPath" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/Modules/GradeAgentMacApp.swiftmodule",
+      "objects" : [
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GradeAgentMacApp.swift.o",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiAPIClient.swift.o",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiStore.swift.o",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Models.swift.o",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/StatisticsViews.swift.o",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Views.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "GradeAgentMacApp_main",
+        "-swift-version",
+        "6",
+        "-Xfrontend",
+        "-experimental-lazy-typecheck",
+        "-Xfrontend",
+        "-experimental-skip-all-function-bodies",
+        "-Xfrontend",
+        "-experimental-allow-module-with-compiler-errors",
+        "-Xfrontend",
+        "-empty-abi-descriptor",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "gradeagentmacapp"
+      ],
+      "outputFileMapPath" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/Modules/GradeAgentMacApp.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : true,
+      "sources" : [
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GradeAgentMacApp.swift",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiAPIClient.swift",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiStore.swift",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Models.swift",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/StatisticsViews.swift",
+        "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Views.swift"
+      ],
+      "tempsPath" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "GradeAgentMacApp" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "GradeAgentMacApp",
+      "-package-name",
+      "gradeagentmacapp",
+      "-c",
+      "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GradeAgentMacApp.swift",
+      "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiAPIClient.swift",
+      "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiStore.swift",
+      "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Models.swift",
+      "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/StatisticsViews.swift",
+      "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Views.swift",
+      "-I",
+      "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "GradeAgentMacApp_main",
+      "-swift-version",
+      "6",
+      "-Xfrontend",
+      "-experimental-lazy-typecheck",
+      "-Xfrontend",
+      "-experimental-skip-all-function-bodies",
+      "-Xfrontend",
+      "-experimental-allow-module-with-compiler-errors",
+      "-Xfrontend",
+      "-empty-abi-descriptor",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "gradeagentmacapp",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "GradeAgentMacApp" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GradeAgentMacApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiAPIClient.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiStore.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Models.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/StatisticsViews.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Views.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/sources"
+    },
+    "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}

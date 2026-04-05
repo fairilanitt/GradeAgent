@@ -1,0 +1,47 @@
+{
+  "": {
+    "swift-dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/primary.swiftdeps"
+  },
+  "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GradeAgentMacApp.swift": {
+    "dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GradeAgentMacApp.d",
+    "object": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GradeAgentMacApp.swift.o",
+    "swiftmodule": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GradeAgentMacApp~partial.swiftmodule",
+    "swift-dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GradeAgentMacApp.swiftdeps",
+    "diagnostics": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GradeAgentMacApp.dia"
+  },
+  "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiAPIClient.swift": {
+    "dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiAPIClient.d",
+    "object": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiAPIClient.swift.o",
+    "swiftmodule": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiAPIClient~partial.swiftmodule",
+    "swift-dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiAPIClient.swiftdeps",
+    "diagnostics": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiAPIClient.dia"
+  },
+  "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/GuiStore.swift": {
+    "dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiStore.d",
+    "object": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiStore.swift.o",
+    "swiftmodule": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiStore~partial.swiftmodule",
+    "swift-dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiStore.swiftdeps",
+    "diagnostics": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/GuiStore.dia"
+  },
+  "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Models.swift": {
+    "dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Models.d",
+    "object": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Models.swift.o",
+    "swiftmodule": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Models~partial.swiftmodule",
+    "swift-dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Models.swiftdeps",
+    "diagnostics": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Models.dia"
+  },
+  "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/StatisticsViews.swift": {
+    "dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/StatisticsViews.d",
+    "object": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/StatisticsViews.swift.o",
+    "swiftmodule": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/StatisticsViews~partial.swiftmodule",
+    "swift-dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/StatisticsViews.swiftdeps",
+    "diagnostics": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/StatisticsViews.dia"
+  },
+  "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/Sources/GradeAgentMacApp/Views.swift": {
+    "dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Views.d",
+    "object": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Views.swift.o",
+    "swiftmodule": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Views~partial.swiftmodule",
+    "swift-dependencies": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Views.swiftdeps",
+    "diagnostics": "/Users/ek/GradeAgent/apps/macos/GradeAgentMacApp/.build/index-build/arm64-apple-macosx/debug/GradeAgentMacApp.build/Views.dia"
+  }
+}

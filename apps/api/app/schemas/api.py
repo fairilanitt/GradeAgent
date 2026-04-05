@@ -207,6 +207,107 @@ class ExamSessionGradingTaskResult(BrowserTaskResult):
     report_path: str | None = None
 
 
+class GuiPromptTemplate(BaseModel):
+    prompt_id: str
+    title: str
+    body: str
+    built_in: bool = False
+
+
+class GuiPromptSaveRequest(BaseModel):
+    prompt_id: str | None = None
+    title: str
+    body: str
+
+
+class GuiExerciseColumn(BaseModel):
+    column_key: str
+    title: str
+    category_name: str | None = None
+    exercise_number: str | None = None
+    total_cell_count: int = 0
+    reviewed_cell_count: int = 0
+    pending_cell_count: int = 0
+
+
+class GuiStateResponse(BaseModel):
+    browser_ready: bool = False
+    session_id: str | None = None
+    prompt_count: int = 0
+
+
+class GuiBrowserStartResponse(BaseModel):
+    session_id: str
+    browser_ready: bool = True
+
+
+class GuiOverviewResponse(BaseModel):
+    assignment_title: str = ""
+    group_name: str | None = None
+    students_answered_count: int | None = None
+    students_total_count: int | None = None
+    exercises: list[GuiExerciseColumn] = Field(default_factory=list)
+
+
+class GuiGradeExerciseRequest(BaseModel):
+    column_key: str
+    instructions: str
+    prompt_id: str | None = None
+    prompt_title: str | None = None
+    max_steps: int = Field(default=260, ge=20, le=800)
+
+
+class GuiGradeExerciseResponse(BaseModel):
+    result: ExamSessionGradingTaskResult
+    exercises: list[GuiExerciseColumn] = Field(default_factory=list)
+
+
+class GuiStatisticsEntry(BaseModel):
+    student_name: str = ""
+    student_progress: str | None = None
+    assignment_title: str = ""
+    group_name: str | None = None
+    category_name: str | None = None
+    exercise_label: str | None = None
+    exercise_number: str | None = None
+    objective_text: str = ""
+    target_text: str = ""
+    question_text: str = ""
+    answer_text: str = ""
+    model_answer_text: str = ""
+    points_text: str = ""
+    score_awarded: float | None = None
+    score_possible: float | None = None
+    basis_lines: list[str] = Field(default_factory=list)
+    exercise_url: str = ""
+    status: str = "scored"
+
+
+class GuiStatisticsRun(BaseModel):
+    run_id: str
+    job_id: str
+    recorded_at: datetime
+    status: str
+    summary: str
+    assignment_title: str = ""
+    group_name: str | None = None
+    category_name: str | None = None
+    exercise_label: str | None = None
+    exercise_number: str | None = None
+    students_answered_count: int | None = None
+    students_total_count: int | None = None
+    processed_answers: int = 0
+    filled_point_fields: int = 0
+    report_path: str | None = None
+    prompt_id: str | None = None
+    prompt_title: str | None = None
+    entries: list[GuiStatisticsEntry] = Field(default_factory=list)
+
+
+class GuiStatisticsResponse(BaseModel):
+    runs: list[GuiStatisticsRun] = Field(default_factory=list)
+
+
 class RuntimeCounts(BaseModel):
     assessments: int = 0
     submissions: int = 0

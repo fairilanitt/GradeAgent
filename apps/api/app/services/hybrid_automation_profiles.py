@@ -278,9 +278,24 @@ SANOMAPRO_REVIEW_EXERCISE_PROFILE = HybridAutomationPageProfile(
             "Main review layout container for the opened exercise.",
         ),
         HybridAutomationSelector(
+            "exercise_objective_block",
+            ".item-body.eb-instruction-activity, .item-body.ng-scope.eb-instruction-activity",
+            "Instruction/objective text directly under the blue exercise banner.",
+        ),
+        HybridAutomationSelector(
+            "exercise_target_block",
+            ".item-body.eb-question .eb-instruction-text, .item-body.ng-scope.eb-question .eb-instruction-text",
+            "Source phrase or other translation target shown below the objective.",
+        ),
+        HybridAutomationSelector(
             "student_answer_panel",
             ".student-answer",
             "Container that renders the student's answer content.",
+        ),
+        HybridAutomationSelector(
+            "student_answer_display",
+            ".item-body .richtext-display .display, .item-body .display-area .display",
+            "Rendered student answer text inside the gray answer box.",
         ),
         HybridAutomationSelector(
             "interactions_review",
@@ -306,6 +321,16 @@ SANOMAPRO_REVIEW_EXERCISE_PROFILE = HybridAutomationPageProfile(
             "manual_score_input",
             "input.manual-score[ng-model='ctrl.score'][ng-blur='ctrl.updateScore()']",
             "Plain text input used to enter the numeric score.",
+        ),
+        HybridAutomationSelector(
+            "manual_score_container",
+            ".score-container",
+            "Container that shows '/ X pistettä' next to the numeric input.",
+        ),
+        HybridAutomationSelector(
+            "model_answer_container",
+            ".answer-model .answer-container",
+            "Rendered model answer text used for comparison when the prompt asks for it.",
         ),
         HybridAutomationSelector(
             "assignment_feedback_textarea",
@@ -406,6 +431,9 @@ SANOMAPRO_REVIEW_EXERCISE_PROFILE = HybridAutomationPageProfile(
     notes=(
         "The detailed review route includes assignment, activity, document, and student identifiers in the URL.",
         "The numeric score field is a plain text input; Hybrid Automation should type only the number and let ctrl.updateScore() commit on blur.",
+        "The student name and Oppilas X/Y progression are exposed as black H2 headings above the blue Tehtävä banner.",
+        "The exercise objective is rendered in '.item-body.eb-instruction-activity' and the translation target in '.item-body.eb-question .eb-instruction-text'.",
+        "The gray answer box includes helper UI and a word counter; Hybrid Automation should read only the '.display' text and ignore '.selection-hint' and '.word-count'.",
         "Grade current exercises top-to-bottom by using the green student navigation arrows and reading the black Oppilas X/Y counter.",
         "When the current exercise reaches the last student, switch to the next exercise from the right-side main menu document links before falling back to the wave arrow buttons.",
     ),

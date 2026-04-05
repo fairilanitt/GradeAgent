@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.db import get_session
+from app.gui_runtime import get_gui_runtime, reset_gui_runtime
 from app.models.domain import (
     Assessment,
     BrowserAutomationJob,
@@ -20,6 +21,15 @@ from app.schemas.api import (
     BrowserTaskCreate,
     BrowserTaskResult,
     GradeRunCreate,
+    GuiBrowserStartResponse,
+    GuiExerciseColumn,
+    GuiGradeExerciseRequest,
+    GuiGradeExerciseResponse,
+    GuiOverviewResponse,
+    GuiPromptSaveRequest,
+    GuiPromptTemplate,
+    GuiStatisticsResponse,
+    GuiStateResponse,
     QueueGradingTaskCreate,
     QueueGradingTaskResult,
     ReleaseResponse,
@@ -51,9 +61,137 @@ router = APIRouter()
 settings = get_settings()
 
 
+def _map_gui_prompt(prompt) -> GuiPromptTemplate:
+    return GuiPromptTemplate(
+        prompt_id=prompt.prompt_id,
+        title=prompt.title,
+        body=prompt.body,
+        built_in=prompt.built_in,
+    )
+
+
+def _map_gui_column(column) -> GuiExerciseColumn:
+    return GuiExerciseColumn(
+        column_key=column.column_key,
+        title=column.label or f"Tehtävä {column.column_index + 1}",
+        category_name=column.category_name,
+        exercise_number=column.exercise_number,
+        total_cell_count=column.total_cell_count,
+        reviewed_cell_count=column.reviewed_cell_count,
+        pending_cell_count=column.pending_cell_count,
+    )
+
+
+def _build_gui_overview_response(overview_state) -> GuiOverviewResponse:
+    pending_columns = [column for column in overview_state.exercise_columns if column.pending_cell_count > 0]
+    return GuiOverviewResponse(
+        assignment_title=overview_state.assignment_title,
+        group_name=overview_state.group_name,
+        students_answered_count=overview_state.students_answered_count,
+        students_total_count=overview_state.students_total_count,
+        exercises=[_map_gui_column(column) for column in pending_columns],
+    )
+
+
 @router.get("/health")
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/gui/state", response_model=GuiStateResponse)
+def get_gui_state() -> GuiStateResponse:
+    runtime = get_gui_runtime()
+    return GuiStateResponse.model_validate(runtime.state())
+
+
+@router.post("/gui/browser/start", response_model=GuiBrowserStartResponse)
+def start_gui_browser() -> GuiBrowserStartResponse:
+    runtime = get_gui_runtime()
+    try:
+        session_id = runtime.ensure_browser_started()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GuiBrowserStartResponse(session_id=session_id, browser_ready=True)
+
+
+@router.post("/gui/browser/stop", response_model=GuiStateResponse)
+def stop_gui_browser() -> GuiStateResponse:
+    runtime = get_gui_runtime()
+    try:
+        state = runtime.stop_browser()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GuiStateResponse.model_validate(state)
+
+
+@router.get("/gui/overview", response_model=GuiOverviewResponse)
+def get_gui_overview() -> GuiOverviewResponse:
+    runtime = get_gui_runtime()
+    try:
+        overview_state = runtime.refresh_overview()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _build_gui_overview_response(overview_state)
+
+
+@router.get("/gui/prompts", response_model=list[GuiPromptTemplate])
+def list_gui_prompts() -> list[GuiPromptTemplate]:
+    runtime = get_gui_runtime()
+    return [_map_gui_prompt(prompt) for prompt in runtime.prompt_templates()]
+
+
+@router.post("/gui/prompts/new", response_model=GuiPromptTemplate, status_code=status.HTTP_201_CREATED)
+def create_gui_prompt() -> GuiPromptTemplate:
+    runtime = get_gui_runtime()
+    return _map_gui_prompt(runtime.new_prompt_template())
+
+
+@router.post("/gui/prompts/save", response_model=GuiPromptTemplate)
+def save_gui_prompt(payload: GuiPromptSaveRequest) -> GuiPromptTemplate:
+    runtime = get_gui_runtime()
+    try:
+        prompt = runtime.save_prompt(
+            prompt_id=payload.prompt_id,
+            title=payload.title,
+            body=payload.body,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _map_gui_prompt(prompt)
+
+
+@router.post("/gui/exercises/grade", response_model=GuiGradeExerciseResponse)
+def grade_gui_exercise(payload: GuiGradeExerciseRequest) -> GuiGradeExerciseResponse:
+    runtime = get_gui_runtime()
+    try:
+        result, overview_state = runtime.grade_exercise(
+            column_key=payload.column_key,
+            instructions=payload.instructions,
+            prompt_id=payload.prompt_id,
+            prompt_title=payload.prompt_title,
+            max_steps=payload.max_steps,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GuiGradeExerciseResponse(
+        result=result,
+        exercises=[
+            _map_gui_column(column)
+            for column in overview_state.exercise_columns
+            if column.pending_cell_count > 0
+        ],
+    )
+
+
+@router.get("/gui/statistics", response_model=GuiStatisticsResponse)
+def get_gui_statistics() -> GuiStatisticsResponse:
+    runtime = get_gui_runtime()
+    return GuiStatisticsResponse(runs=runtime.statistics())
+
+
+@router.post("/gui/shutdown", status_code=status.HTTP_204_NO_CONTENT)
+def shutdown_gui_runtime() -> None:
+    reset_gui_runtime()
 
 
 @router.post("/assessments", response_model=Assessment, status_code=status.HTTP_201_CREATED)

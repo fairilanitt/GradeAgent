@@ -17,6 +17,7 @@ from app.services.browser_navigation import (
     SanomaExerciseScoreField,
     SanomaGradingReportEntry,
     SanomaExerciseState,
+    SanomaOverviewExerciseColumn,
     SanomaOverviewState,
     SanomaScoreDecision,
     SanomaScoreDecisionField,
@@ -789,6 +790,9 @@ def test_extract_sanomapro_overview_state_parses_pending_candidates() -> None:
     page.evaluate_result = {
         "route": "/as/teacher/assignment/demo/review",
         "assignment_title": "Demo exam",
+        "group_name": "Katjas grupp RUB14.7",
+        "students_answered_count": 31,
+        "students_total_count": 31,
         "visible_cell_count": 2,
         "reviewed_cell_count": 1,
         "unreviewed_cell_count": 1,
@@ -802,11 +806,69 @@ def test_extract_sanomapro_overview_state_parses_pending_candidates() -> None:
 
     assert isinstance(state, SanomaOverviewState)
     assert state.assignment_title == "Demo exam"
+    assert state.group_name == "Katjas grupp RUB14.7"
+    assert state.students_answered_count == 31
+    assert state.students_total_count == 31
     assert state.visible_cell_count == 2
     assert state.reviewed_cell_count == 1
     assert state.unreviewed_cell_count == 1
     assert state.fully_reviewed is False
     assert state.pending_candidates[0].selector_index == 1
+
+
+def test_extract_sanomapro_overview_state_groups_exercise_columns() -> None:
+    service = BrowserNavigationService(Settings())
+    page = StubInteractivePage("https://arvi.sanomapro.fi/as/teacher/assignment/demo/review")
+    page.evaluate_result = {
+        "route": "/as/teacher/assignment/demo/review",
+        "assignment_title": "Demo exam",
+        "visible_cell_count": 6,
+        "reviewed_cell_count": 3,
+        "unreviewed_cell_count": 3,
+        "fully_reviewed": False,
+        "pending_candidates": [
+            {"selector_index": 1, "score_text": "- / 2", "candidate_key": "1:- / 2"},
+            {"selector_index": 4, "score_text": "- / 2", "candidate_key": "4:- / 2"},
+        ],
+        "exercise_columns": [
+            {
+                "column_key": "exercise-column-0",
+                "column_index": 0,
+                "label": "Text 1 / 1",
+                "category_name": "Text 1",
+                "exercise_number": "1",
+                "total_cell_count": 3,
+                "reviewed_cell_count": 2,
+                "pending_cell_count": 1,
+                "first_pending_selector_index": 1,
+            },
+            {
+                "column_key": "exercise-column-1",
+                "column_index": 1,
+                "label": "Text 1 / 2",
+                "category_name": "Text 1",
+                "exercise_number": "2",
+                "total_cell_count": 3,
+                "reviewed_cell_count": 1,
+                "pending_cell_count": 2,
+                "first_pending_selector_index": 4,
+            },
+        ],
+    }
+
+    state = asyncio.run(service._extract_sanomapro_overview_state(page))
+
+    assert [column.label for column in state.exercise_columns] == ["Text 1 / 1", "Text 1 / 2"]
+    assert [column.category_name for column in state.exercise_columns] == ["Text 1", "Text 1"]
+    assert [column.exercise_number for column in state.exercise_columns] == ["1", "2"]
+    assert state.exercise_columns[0].first_pending_selector_index == 1
+    assert state.exercise_columns[1].pending_cell_count == 2
+
+
+def test_sanomapro_reasoning_overlay_text_omits_placeholder_before_decision() -> None:
+    service = BrowserNavigationService(Settings())
+
+    assert service._sanomapro_reasoning_overlay_text() is None
 
 
 def test_write_sanomapro_grading_report_includes_student_answers_basis_and_links(tmp_path, monkeypatch) -> None:
@@ -1036,11 +1098,13 @@ def test_extract_sanomapro_exercise_state_targets_live_dom_answer_and_model_answ
         async def evaluate(self, script: str) -> str:
             self.recorded_scripts.append(script)
             if (
-                ".richtext-display .display" in script
+                ".item-body.eb-instruction-activity" in script
+                and ".item-body.eb-question .eb-instruction-text" in script
+                and ".richtext-display .display" in script
                 and ".selection-hint" in script
                 and ".word-count" in script
                 and ".answer-model .answer-container" in script
-                and ".review-item__intro .assessment-content .contents" in script
+                and ".student-feedback__student-name" in script
             ):
                 return json.dumps(
                     {
@@ -1056,9 +1120,12 @@ def test_extract_sanomapro_exercise_state_targets_live_dom_answer_and_model_answ
                         "current_progress_document_selector_index": 3,
                         "next_progress_document_selector_index": 4,
                         "next_progress_document_label": "Text 4 / 5",
-                        "question_text": "Käännä lauseet suomeksi.\n4 Tycker du att det är mahdollista...",
+                        "objective_text": "Käännä lauseet suomeksi.",
+                        "target_text": "Tycker du att det är mahdollista...",
+                        "question_text": "Käännä lauseet suomeksi.\nTycker du att det är mahdollista...",
                         "answer_text": "Pidätkö sinä enemmän ja saada nuorten äänet kuuluviin?",
                         "model_answer_text": "Onko sinusta mahdollista vaikuttaa ja saada nuorten äänet kuuluviin?",
+                        "max_points": 2,
                         "score_fields": [
                             {
                                 "index": 0,
@@ -1105,9 +1172,12 @@ def test_extract_sanomapro_exercise_state_targets_live_dom_answer_and_model_answ
                     "current_progress_document_selector_index": 3,
                     "next_progress_document_selector_index": 4,
                     "next_progress_document_label": "Text 4 / 5",
+                    "objective_text": "Wrong fallback objective",
+                    "target_text": "Wrong fallback target",
                     "question_text": "Wrong fallback question",
                     "answer_text": "Valitse osa oppilaan vastauksesta ja lisää kommentti. 8",
                     "model_answer_text": "Mallivastaus",
+                    "max_points": None,
                     "score_fields": [],
                     "progress_documents": [],
                     "previous_student_available": True,
@@ -1124,10 +1194,13 @@ def test_extract_sanomapro_exercise_state_targets_live_dom_answer_and_model_answ
 
     state = asyncio.run(service._extract_sanomapro_exercise_state(page))
 
-    assert state.question_text.startswith("Käännä lauseet suomeksi.")
+    assert state.objective_text == "Käännä lauseet suomeksi."
+    assert state.target_text == "Tycker du att det är mahdollista..."
+    assert state.question_text == "Käännä lauseet suomeksi.\nTycker du att det är mahdollista..."
     assert state.answer_text == "Pidätkö sinä enemmän ja saada nuorten äänet kuuluviin?"
     assert "Valitse osa oppilaan vastauksesta" not in state.answer_text
     assert state.model_answer_text == "Onko sinusta mahdollista vaikuttaa ja saada nuorten äänet kuuluviin?"
+    assert state.max_points == 2
     assert state.current_student_index == 6
     assert state.student_count == 31
     assert state.current_section_name == "Text 4"
@@ -1466,6 +1539,112 @@ def test_build_sanomapro_score_decision_includes_dom_detected_two_point_policy(m
     assert "Every field `rationale` must explain why that specific score was chosen." in prompt_text
 
 
+def test_build_sanomapro_score_decision_renders_prompt_library_placeholders(monkeypatch) -> None:
+    service = BrowserNavigationService(
+        Settings().model_copy(
+            update={
+                "sanomapro_exercise_grading_provider": "vertex_ai",
+                "sanomapro_exercise_grading_model": "gemini-3.1-pro-preview",
+                "vertex_ai_project": "gradeagent-test",
+            }
+        )
+    )
+    service._remember_sanomapro_overview_context(
+        SanomaOverviewState(
+            group_name="Katjas grupp RUB14.7",
+            students_answered_count=31,
+            students_total_count=31,
+        )
+    )
+    exercise_state = SanomaExerciseState(
+        route="https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise",
+        assignment_title="Demo exam",
+        student_name="Aino",
+        student_progress="Oppilas 4/31",
+        exercise_label="2p Lauseet [SWE -> FIN]",
+        current_section_name="TEXT 4",
+        current_progress_document_label="4",
+        objective_text="Käännä lauseet suomeksi.",
+        target_text="Tycker du att det är möjligt?",
+        question_text="Käännä ruotsista suomeksi.\n4 Tycker du att det är möjligt?",
+        answer_text="Onko mielestäsi mahdollista?",
+        model_answer_text="Onko sinusta mahdollista?",
+        max_points=2,
+        score_fields=[
+            SanomaExerciseScoreField(
+                index=0,
+                label="Pistemäärä",
+                current_value="",
+                container_text="Pistemäärä / 2 pistettä",
+                max_score=2,
+            )
+        ],
+    )
+
+    class CapturingModel:
+        def __init__(self) -> None:
+            self.messages = None
+
+        async def ainvoke(self, messages):
+            self.messages = messages
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "summary": "Meaning is preserved.",
+                        "confidence": 0.95,
+                        "scores": [{"index": 0, "score": 2, "rationale": "The Finnish meaning matches."}],
+                    }
+                )
+            )
+
+    model = CapturingModel()
+    monkeypatch.setattr(
+        "app.services.browser_navigation.build_explicit_grading_chat_model",
+        lambda settings, provider, model_name, routing_tier="standard": model,
+    )
+
+    asyncio.run(
+        service._build_sanomapro_score_decision(
+            ExamSessionGradingTaskCreate(
+                instructions=(
+                    'Student "(STUDENT)" is at "(PROGRESSION)". '
+                    'Objective "(OBJECTIVE)". Category "(CATEGORY)" and exercise "(EXERCISE NUMBER)". '
+                    'The target is "(TARGET)", the answer is "(ANSWER)", the model answer is "(MODELANSWER)", '
+                    'and max points are "(MAXPOINTS)". Ryhmä "(GROUP)" has "(STUDENTS)" students.'
+                ),
+            ),
+            exercise_state,
+        )
+    )
+
+    prompt_text = model.messages[1].content
+
+    assert 'Katjas grupp RUB14.7' in prompt_text
+    assert '31' in prompt_text
+    assert 'Aino' in prompt_text
+    assert 'Oppilas 4/31' in prompt_text
+    assert 'Käännä lauseet suomeksi.' in prompt_text
+    assert 'TEXT 4' in prompt_text
+    assert 'exercise "4"' in prompt_text
+    assert 'Tycker du att det är möjligt?' in prompt_text
+    assert 'Onko mielestäsi mahdollista?' in prompt_text
+    assert 'Onko sinusta mahdollista?' in prompt_text
+    assert 'max points are "2"' in prompt_text
+    assert '(GROUP)' not in prompt_text
+    assert '(STUDENTS)' not in prompt_text
+    assert '(STUDENT)' not in prompt_text
+    assert '(PROGRESSION)' not in prompt_text
+    assert '(OBJECTIVE)' not in prompt_text
+    assert '(TARGET)' not in prompt_text
+    assert '(ANSWER)' not in prompt_text
+    assert '(MODELANSWER)' not in prompt_text
+    assert '(MAXPOINTS)' not in prompt_text
+    assert '(CATEGORY)' not in prompt_text
+    assert '(EXERCISE NUMBER)' not in prompt_text
+    assert '(SWE PHRASE)' not in prompt_text
+    assert '(FIN ANSWER)' not in prompt_text
+
+
 def test_build_sanomapro_score_decision_falls_back_when_model_returns_non_json(monkeypatch) -> None:
     service = BrowserNavigationService(
         Settings().model_copy(
@@ -1559,3 +1738,203 @@ def test_grade_exam_from_current_page_uses_sanomapro_autonomy(monkeypatch, tmp_p
     )
 
     assert result is expected_result
+
+
+def test_run_sanomapro_single_exercise_flow_grades_only_selected_column(monkeypatch, tmp_path) -> None:
+    service = BrowserNavigationService(Settings())
+    overview_url = "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+    exercise_url = "https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/doc-1/exercise"
+    page = StubInteractivePage(overview_url)
+    session = StubInteractiveBrowserSession(page)
+    exercise_states = [
+        SanomaExerciseState(
+            route="/as/teacher/review/demo/activity/a/document/doc-1/exercise",
+            assignment_title="Demo exam",
+            student_name="Ada",
+            student_progress="Oppilas 1/2",
+            current_student_index=1,
+            student_count=2,
+            exercise_label="Text 1 / 1",
+            current_section_name="Text 1",
+            current_progress_document_label="1",
+            current_progress_document_selector_index=0,
+            next_progress_document_selector_index=1,
+            next_progress_document_label="Text 1 / 2",
+            question_text="Q1",
+            answer_text="A1",
+            model_answer_text="M1",
+            score_fields=[SanomaExerciseScoreField(index=0, max_score=2)],
+            previous_student_available=False,
+            next_student_available=True,
+            exit_available=True,
+        ),
+        SanomaExerciseState(
+            route="/as/teacher/review/demo/activity/a/document/doc-1/exercise",
+            assignment_title="Demo exam",
+            student_name="Bert",
+            student_progress="Oppilas 2/2",
+            current_student_index=2,
+            student_count=2,
+            exercise_label="Text 1 / 1",
+            current_section_name="Text 1",
+            current_progress_document_label="1",
+            current_progress_document_selector_index=0,
+            next_progress_document_selector_index=1,
+            next_progress_document_label="Text 1 / 2",
+            question_text="Q2",
+            answer_text="A2",
+            model_answer_text="M2",
+            score_fields=[SanomaExerciseScoreField(index=0, max_score=2)],
+            previous_student_available=True,
+            next_student_available=False,
+            exit_available=True,
+        ),
+    ]
+    state_index = {"value": 0}
+    overview_call_count = {"value": 0}
+    opened_columns: list[str] = []
+    next_student_calls: list[str] = []
+    exited_to_overview: list[str] = []
+
+    async def fake_current_page_url(browser_session):
+        return page.url
+
+    async def fake_set_overlay(*args, **kwargs):
+        return None
+
+    async def fake_capture_page_state(browser_session, fallback_url, screenshot_path):
+        return page.url, "Overview"
+
+    async def fake_extract_overview_state(current_page):
+        overview_call_count["value"] += 1
+        if overview_call_count["value"] == 1:
+            return SanomaOverviewState(
+                route="/as/teacher/assignment/demo/review",
+                assignment_title="Demo exam",
+                visible_cell_count=4,
+                reviewed_cell_count=1,
+                unreviewed_cell_count=3,
+                fully_reviewed=False,
+                pending_candidates=[
+                    {"selector_index": 0, "score_text": "- / 2", "candidate_key": "0:- / 2"},
+                    {"selector_index": 2, "score_text": "- / 2", "candidate_key": "2:- / 2"},
+                ],
+                exercise_columns=[
+                    SanomaOverviewExerciseColumn(
+                        column_key="exercise-column-0",
+                        column_index=0,
+                        label="Text 1 / 1",
+                        total_cell_count=2,
+                        reviewed_cell_count=0,
+                        pending_cell_count=2,
+                        first_pending_selector_index=0,
+                    ),
+                    SanomaOverviewExerciseColumn(
+                        column_key="exercise-column-1",
+                        column_index=1,
+                        label="Text 1 / 2",
+                        total_cell_count=2,
+                        reviewed_cell_count=1,
+                        pending_cell_count=1,
+                        first_pending_selector_index=2,
+                    ),
+                ],
+            )
+        return SanomaOverviewState(
+            route="/as/teacher/assignment/demo/review",
+            assignment_title="Demo exam",
+            visible_cell_count=4,
+            reviewed_cell_count=3,
+            unreviewed_cell_count=1,
+            fully_reviewed=False,
+            pending_candidates=[
+                {"selector_index": 2, "score_text": "- / 2", "candidate_key": "2:- / 2"},
+            ],
+            exercise_columns=[
+                SanomaOverviewExerciseColumn(
+                    column_key="exercise-column-0",
+                    column_index=0,
+                    label="Text 1 / 1",
+                    total_cell_count=2,
+                    reviewed_cell_count=2,
+                    pending_cell_count=0,
+                    first_pending_selector_index=None,
+                ),
+                SanomaOverviewExerciseColumn(
+                    column_key="exercise-column-1",
+                    column_index=1,
+                    label="Text 1 / 2",
+                    total_cell_count=2,
+                    reviewed_cell_count=1,
+                    pending_cell_count=1,
+                    first_pending_selector_index=2,
+                ),
+            ],
+        )
+
+    async def fake_open_column(page_obj, current_url, column):
+        opened_columns.append(column.label)
+        page.url = exercise_url
+        session.current_page_url = exercise_url
+        return True
+
+    async def fake_ensure_score_fields_visible(current_page, current_url):
+        return True
+
+    async def fake_extract_exercise_state(current_page):
+        return exercise_states[state_index["value"]]
+
+    async def fake_build_score_decision(payload, exercise_state):
+        return SanomaScoreDecision(
+            summary=f"Scored {exercise_state.student_name}",
+            confidence=0.92,
+            scores=[SanomaScoreDecisionField(index=0, score=2, rationale="Matches the model answer.")],
+        )
+
+    async def fake_apply_score(page_obj, current_url, exercise_state, decision, *, dry_run):
+        return 1
+
+    async def fake_next_student(page_obj, current_url):
+        next_student_calls.append(exercise_states[state_index["value"]].student_progress or "-")
+        state_index["value"] = 1
+        page.url = exercise_url
+        session.current_page_url = exercise_url
+        return True
+
+    async def fake_exit_to_overview(page_obj, current_url):
+        exited_to_overview.append(current_url)
+        page.url = overview_url
+        session.current_page_url = overview_url
+        return True
+
+    monkeypatch.setattr(service, "get_current_page_url", fake_current_page_url)
+    monkeypatch.setattr(service, "_set_browser_status_overlay", fake_set_overlay)
+    monkeypatch.setattr(service, "_capture_page_state", fake_capture_page_state)
+    monkeypatch.setattr(service, "_extract_sanomapro_overview_state", fake_extract_overview_state)
+    monkeypatch.setattr(service, "_open_sanomapro_overview_column", fake_open_column)
+    monkeypatch.setattr(service, "_ensure_sanomapro_score_fields_visible", fake_ensure_score_fields_visible)
+    monkeypatch.setattr(service, "_extract_sanomapro_exercise_state", fake_extract_exercise_state)
+    monkeypatch.setattr(service, "_build_sanomapro_score_decision", fake_build_score_decision)
+    monkeypatch.setattr(service, "_apply_sanomapro_score_decision", fake_apply_score)
+    monkeypatch.setattr(service, "_go_to_next_sanomapro_student", fake_next_student)
+    monkeypatch.setattr(service, "_exit_sanomapro_exercise_to_overview", fake_exit_to_overview)
+
+    result = asyncio.run(
+        service._run_sanomapro_single_exercise_flow(
+            ExamSessionGradingTaskCreate(instructions="Score the answer."),
+            "job-single-exercise",
+            session,
+            current_url=overview_url,
+            provider="ollama",
+            screenshot_path=tmp_path / "result.png",
+            column_key="exercise-column-0",
+        )
+    )
+
+    assert result.status == "completed"
+    assert result.processed_answers == 2
+    assert result.completed_exercise_columns == 1
+    assert opened_columns == ["Text 1 / 1"]
+    assert next_student_calls == ["Oppilas 1/2"]
+    assert exited_to_overview == [exercise_url]
+    assert "Text 1 / 1" in result.summary
