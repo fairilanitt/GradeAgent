@@ -11,7 +11,12 @@ from PIL import Image
 from langchain_core.messages import AIMessage
 
 from app.config import Settings
-from app.schemas.api import ExamSessionGradingTaskCreate, ExamSessionGradingTaskResult
+from app.schemas.api import (
+    CriterionDefinition,
+    ExamSessionGradingTaskCreate,
+    ExamSessionGradingTaskResult,
+    QueueGradingTaskCreate,
+)
 from app.services.browser_navigation import (
     BrowserNavigationService,
     SanomaExerciseScoreField,
@@ -123,6 +128,7 @@ class StubBrowserSession:
     def __init__(self) -> None:
         self.screenshot_path: Path | None = None
         self.started = False
+        self.killed = False
         self.navigated_to: str | None = None
         self.current_page_url = "https://example.com/exam"
         self.current_page_title = "Example exam"
@@ -153,6 +159,9 @@ class StubBrowserSession:
     async def navigate_to(self, url: str, new_tab: bool = False) -> None:
         assert new_tab is False
         self.navigated_to = url
+
+    async def kill(self) -> None:
+        self.killed = True
 
 
 class StubInteractiveBrowserSession(StubBrowserSession):
@@ -1937,6 +1946,141 @@ def test_grade_exam_from_current_page_uses_sanomapro_autonomy(monkeypatch, tmp_p
     )
 
     assert result is expected_result
+
+
+def test_grade_queue_uses_deterministic_sanomapro_flow_for_review_overview(monkeypatch, tmp_path) -> None:
+    service = BrowserNavigationService(Settings())
+    overview_url = "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+    stub_session = StubBrowserSession()
+    stub_session.current_page_url = overview_url
+    screenshot_path = tmp_path / "queue.png"
+    processed_columns: list[str] = []
+    overview_states = iter(
+        [
+            SanomaOverviewState(
+                route="/as/teacher/assignment/demo/review",
+                assignment_title="Demo exam",
+                visible_cell_count=6,
+                reviewed_cell_count=1,
+                unreviewed_cell_count=5,
+                fully_reviewed=False,
+                exercise_columns=[
+                    SanomaOverviewExerciseColumn(
+                        column_key="exercise-1",
+                        column_index=0,
+                        label="Text 4 / 4",
+                        pending_cell_count=3,
+                        first_pending_selector_index=0,
+                    ),
+                    SanomaOverviewExerciseColumn(
+                        column_key="exercise-2",
+                        column_index=1,
+                        label="Text 4 / 5",
+                        pending_cell_count=2,
+                        first_pending_selector_index=3,
+                    ),
+                ],
+            ),
+            SanomaOverviewState(
+                route="/as/teacher/assignment/demo/review",
+                assignment_title="Demo exam",
+                visible_cell_count=6,
+                reviewed_cell_count=4,
+                unreviewed_cell_count=2,
+                fully_reviewed=False,
+                exercise_columns=[
+                    SanomaOverviewExerciseColumn(
+                        column_key="exercise-2",
+                        column_index=1,
+                        label="Text 4 / 5",
+                        pending_cell_count=2,
+                        first_pending_selector_index=3,
+                    ),
+                ],
+            ),
+        ]
+    )
+
+    async def fake_wait_for_exam_page_ready(browser_session, *, timeout_seconds=12.0):
+        return True
+
+    async def fake_inspect_overview(browser_session):
+        try:
+            return next(overview_states)
+        except StopIteration:
+            return SanomaOverviewState(
+                route="/as/teacher/assignment/demo/review",
+                assignment_title="Demo exam",
+                visible_cell_count=6,
+                reviewed_cell_count=6,
+                unreviewed_cell_count=0,
+                fully_reviewed=True,
+                exercise_columns=[],
+            )
+
+    async def fake_grade_column(payload, job_id, *, column_key, browser_session=None):
+        processed_columns.append(column_key)
+        service._store_last_sanomapro_report_entries(
+            job_id=job_id,
+            entries=[
+                SanomaGradingReportEntry(
+                    student_name="Student",
+                    answer_text=f"Answer for {column_key}",
+                    score_awarded=1.5 if column_key == "exercise-1" else 2.0,
+                    points_text="1.5 / 2" if column_key == "exercise-1" else "2 / 2",
+                )
+            ],
+        )
+        return ExamSessionGradingTaskResult(
+            job_id=job_id,
+            status="completed",
+            summary=f"graded {column_key}",
+            current_exercise_label=column_key,
+        )
+
+    async def fake_capture_page_state(browser_session, current_url, screenshot_path_value):
+        Path(screenshot_path_value).write_bytes(b"test")
+        return current_url, "overview text"
+
+    monkeypatch.setattr(service, "_build_session", lambda target_url, job_id: stub_session)
+    monkeypatch.setattr(service, "_wait_for_exam_page_ready", fake_wait_for_exam_page_ready)
+    monkeypatch.setattr(service, "inspect_sanomapro_overview_passively", fake_inspect_overview)
+    monkeypatch.setattr(service, "grade_sanomapro_exercise_column_from_current_page", fake_grade_column)
+    monkeypatch.setattr(service, "_capture_page_state", fake_capture_page_state)
+    monkeypatch.setattr(
+        "app.services.browser_navigation.build_browser_use_llm",
+        lambda settings: (_ for _ in ()).throw(AssertionError("browser-use LLM should not be used")),
+    )
+
+    result = asyncio.run(
+        service.grade_queue(
+            QueueGradingTaskCreate(
+                target_url=overview_url,
+                criteria=[
+                    CriterionDefinition(
+                        id="accuracy",
+                        label="Accuracy",
+                        description="Check whether the answer matches the target.",
+                        max_score=2,
+                        weight=1,
+                    )
+                ],
+                max_items=2,
+                screenshot_path=str(screenshot_path),
+            ),
+            "queue-job",
+        )
+    )
+
+    assert processed_columns == ["exercise-1", "exercise-2"]
+    assert result.status == "completed"
+    assert result.processed_items == 2
+    assert result.queue_empty is False
+    assert result.last_points_entered == 2.0
+    assert result.last_submission_excerpt == "Answer for exercise-2"
+    assert "additional ungraded columns still remain" in result.summary
+    assert screenshot_path.exists()
+    assert stub_session.killed is True
 
 
 def test_run_sanomapro_single_exercise_flow_grades_only_selected_column(monkeypatch, tmp_path) -> None:

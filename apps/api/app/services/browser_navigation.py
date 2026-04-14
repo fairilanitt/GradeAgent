@@ -4610,6 +4610,311 @@ Rules:
 Return a structured summary when finished.
 """.strip()
 
+    def _is_sanomapro_queue_target(self, url: str | None) -> bool:
+        return self._is_sanomapro_review_overview_url(url) or self._is_sanomapro_review_exercise_url(url)
+
+    def _format_queue_numeric_value(self, value: float) -> str:
+        return str(int(value)) if float(value).is_integer() else f"{value:g}"
+
+    def _build_queue_grading_instructions(self, payload: QueueGradingTaskCreate) -> str:
+        criteria_lines: list[str] = []
+        for index, item in enumerate(payload.criteria, start=1):
+            fragments = [
+                f"{index}. {item.label}: {item.description}",
+                f"Max score {self._format_queue_numeric_value(item.max_score)}.",
+            ]
+            if item.weight != 1:
+                fragments.append(f"Weight {self._format_queue_numeric_value(item.weight)}.")
+            if item.expected_answer:
+                fragments.append(f"Expected answer: {item.expected_answer.strip()}.")
+            if item.keywords:
+                fragments.append(f"Key markers: {', '.join(keyword.strip() for keyword in item.keywords if keyword.strip())}.")
+            criteria_lines.append(" ".join(fragment for fragment in fragments if fragment).strip())
+
+        preference_lines = [
+            f"Strictness: {payload.preferences.strictness}.",
+            f"Tone: {payload.preferences.tone}.",
+            f"Feedback language: {payload.preferences.feedback_language}.",
+        ]
+        if payload.preferences.grading_guidance.strip():
+            preference_lines.append(f"Teacher guidance: {payload.preferences.grading_guidance.strip()}.")
+        if payload.preferences.banned_inferences:
+            banned = ", ".join(
+                item.strip() for item in payload.preferences.banned_inferences if item.strip()
+            )
+            if banned:
+                preference_lines.append(f"Do not infer: {banned}.")
+
+        return "\n".join(
+            [
+                f"Task title: {payload.task_title}.",
+                payload.queue_instruction.strip(),
+                "",
+                "Teacher criteria:",
+                *criteria_lines,
+                "",
+                "Teacher preferences:",
+                *preference_lines,
+                "",
+                "Use only these teacher instructions when grading the current Sanoma Pro exercise.",
+                "Enter only numeric values into the visible score fields.",
+                "Never exceed the visible max score for a field.",
+                "Skip answers that already have visible scores.",
+            ]
+        ).strip()
+
+    def _ordered_pending_sanomapro_columns(
+        self,
+        overview_state: SanomaOverviewState,
+    ) -> list[SanomaOverviewExerciseColumn]:
+        pending_columns = [
+            column
+            for column in overview_state.exercise_columns
+            if column.pending_cell_count > 0 and column.first_pending_selector_index is not None
+        ]
+        return sorted(
+            pending_columns,
+            key=lambda column: (
+                column.column_index,
+                (column.exercise_number or ""),
+                (column.category_name or ""),
+            ),
+        )
+
+    def _queue_submission_excerpt(self, text: str | None, *, limit: int = 220) -> str | None:
+        normalized = " ".join((text or "").split()).strip()
+        if not normalized:
+            return None
+        if len(normalized) <= limit:
+            return normalized
+        return f"{normalized[: max(limit - 1, 1)].rstrip()}…"
+
+    async def _grade_sanomapro_queue_deterministically(
+        self,
+        payload: QueueGradingTaskCreate,
+        job_id: str,
+        *,
+        provider: str,
+        browser_session: BrowserSession,
+        screenshot_path: Path,
+    ) -> QueueGradingTaskResult:
+        instructions = self._build_queue_grading_instructions(payload)
+        per_exercise_payload = ExamSessionGradingTaskCreate(
+            instructions=instructions,
+            dry_run=payload.dry_run,
+            submit_after_typing=payload.submit_after_typing,
+            max_steps=260,
+        )
+        processed_items = 0
+        queue_empty = False
+        last_points_entered: float | None = None
+        last_submission_excerpt: str | None = None
+        child_statuses: list[str] = []
+        final_summary = "No Sanoma Pro exercise columns were processed."
+        current_url = payload.target_url
+
+        try:
+            navigate_to = getattr(browser_session, "navigate_to", None)
+            if callable(navigate_to):
+                try:
+                    await navigate_to(payload.target_url, new_tab=False)
+                except TypeError:
+                    await navigate_to(payload.target_url)
+                current_url = await self.get_current_page_url(browser_session) or payload.target_url
+
+            await self._wait_for_exam_page_ready(browser_session)
+            current_url = await self.get_current_page_url(browser_session) or current_url
+            if self._is_sanomapro_review_exercise_url(current_url):
+                page = await browser_session.get_current_page()
+                if page is None or not await self._exit_sanomapro_exercise_to_overview(page, current_url):
+                    current_url, extracted_text = await self._capture_page_state(
+                        browser_session,
+                        current_url,
+                        screenshot_path,
+                    )
+                    return QueueGradingTaskResult(
+                        job_id=job_id,
+                        status="failed",
+                        summary="Open the Sanoma Pro review overview page before starting deterministic queue grading.",
+                        agent_provider=provider,
+                        agent_model=self._resolved_browser_agent_model(),
+                        current_url=current_url,
+                        screenshot_path=str(screenshot_path),
+                        extracted_text=extracted_text,
+                        processed_items=0,
+                        queue_empty=False,
+                        last_points_entered=None,
+                        last_submission_excerpt=None,
+                        steps=[
+                            {
+                                "name": "page_check",
+                                "status": "failed",
+                                "detail": "The managed browser was on an exercise page and could not return to the overview safely.",
+                            }
+                        ],
+                    )
+                current_url = await self.get_current_page_url(browser_session) or current_url
+
+            if not self._is_sanomapro_review_overview_url(current_url):
+                current_url, extracted_text = await self._capture_page_state(
+                    browser_session,
+                    current_url,
+                    screenshot_path,
+                )
+                return QueueGradingTaskResult(
+                    job_id=job_id,
+                    status="failed",
+                    summary="Open the Sanoma Pro review overview page before starting deterministic queue grading.",
+                    agent_provider=provider,
+                    agent_model=self._resolved_browser_agent_model(),
+                    current_url=current_url,
+                    screenshot_path=str(screenshot_path),
+                    extracted_text=extracted_text,
+                    processed_items=0,
+                    queue_empty=False,
+                    last_points_entered=None,
+                    last_submission_excerpt=None,
+                    steps=[
+                        {
+                            "name": "page_check",
+                            "status": "failed",
+                            "detail": "The managed browser was not on the Sanoma Pro review overview grid.",
+                        }
+                    ],
+                )
+
+            steps = [
+                {
+                    "name": "queue_mode_selected",
+                    "status": "completed",
+                    "detail": "Using deterministic Sanoma Pro queue extraction instead of browser-use navigation.",
+                }
+            ]
+
+            while processed_items < payload.max_items:
+                if self._should_stop_grading():
+                    final_summary = "Stopped deterministic queue grading gracefully at the user's request."
+                    steps.append(
+                        {
+                            "name": "graceful_stop",
+                            "status": "completed",
+                            "detail": final_summary,
+                        }
+                    )
+                    break
+
+                overview_state = await self.inspect_sanomapro_overview_passively(browser_session)
+                pending_columns = self._ordered_pending_sanomapro_columns(overview_state)
+                if not pending_columns:
+                    queue_empty = True
+                    final_summary = (
+                        "Deterministic queue finished: no ungraded Sanoma Pro exercise columns remained."
+                    )
+                    steps.append(
+                        {
+                            "name": "queue_exhausted",
+                            "status": "completed",
+                            "detail": final_summary,
+                        }
+                    )
+                    break
+
+                next_column = pending_columns[0]
+                column_label = self._sanomapro_overview_column_label(next_column) or next_column.column_key
+                steps.append(
+                    {
+                        "name": f"queue_item_{processed_items + 1}",
+                        "status": "completed",
+                        "detail": (
+                            f"Selected {column_label} deterministically from the overview grid "
+                            f"({next_column.pending_cell_count} pending cell(s))."
+                        ),
+                    }
+                )
+
+                child_job_id = str(uuid4())
+                result = await self.grade_sanomapro_exercise_column_from_current_page(
+                    per_exercise_payload,
+                    child_job_id,
+                    column_key=next_column.column_key,
+                    browser_session=browser_session,
+                )
+                child_statuses.append(result.status)
+                report_entries = self.consume_last_sanomapro_report_entries(result.job_id)
+                last_entry = report_entries[-1] if report_entries else None
+                if last_entry is not None:
+                    last_points_entered = last_entry.score_awarded
+                    last_submission_excerpt = self._queue_submission_excerpt(last_entry.answer_text)
+
+                if result.status == "failed":
+                    final_summary = (
+                        f"Deterministic queue stopped on {column_label}: {result.summary}"
+                    )
+                    steps.append(
+                        {
+                            "name": f"queue_item_{processed_items + 1}_failed",
+                            "status": "failed",
+                            "detail": final_summary,
+                        }
+                    )
+                    break
+
+                processed_items += 1
+                final_summary = result.summary
+
+            if not final_summary or final_summary == "No Sanoma Pro exercise columns were processed.":
+                remaining_overview = await self.inspect_sanomapro_overview_passively(browser_session)
+                queue_empty = not self._ordered_pending_sanomapro_columns(remaining_overview)
+                if processed_items:
+                    final_summary = (
+                        f"Deterministic queue processed {processed_items} exercise column(s)."
+                    )
+                elif queue_empty:
+                    final_summary = "Deterministic queue found no ungraded exercise columns."
+
+            current_url, extracted_text = await self._capture_page_state(
+                browser_session,
+                current_url,
+                screenshot_path,
+            )
+            overall_status = "completed"
+            if any(status == "failed" for status in child_statuses):
+                overall_status = "failed" if processed_items == 0 else "needs_review"
+            elif self._should_stop_grading() or any(status == "needs_review" for status in child_statuses):
+                overall_status = "needs_review"
+
+            if processed_items >= payload.max_items and not queue_empty:
+                final_summary = (
+                    f"Deterministic queue processed {processed_items} exercise column(s); "
+                    "additional ungraded columns still remain in the overview."
+                )
+
+            steps.append(
+                {
+                    "name": "artifacts_saved",
+                    "status": "completed",
+                    "detail": f"Saved screenshot to {screenshot_path}.",
+                }
+            )
+
+            return QueueGradingTaskResult(
+                job_id=job_id,
+                status=overall_status,
+                summary=final_summary,
+                agent_provider=provider,
+                agent_model=self._resolved_browser_agent_model(),
+                current_url=current_url,
+                screenshot_path=str(screenshot_path),
+                extracted_text=extracted_text,
+                processed_items=processed_items,
+                queue_empty=queue_empty,
+                last_points_entered=last_points_entered,
+                last_submission_excerpt=last_submission_excerpt,
+                steps=steps,
+            )
+        finally:
+            self.clear_stop_grading_request()
+
     async def navigate(self, payload: BrowserTaskCreate, job_id: str) -> BrowserTaskResult:
         agent: Agent | None = None
         try:
@@ -4705,78 +5010,88 @@ Return a structured summary when finished.
 
     async def grade_queue(self, payload: QueueGradingTaskCreate, job_id: str) -> QueueGradingTaskResult:
         agent: Agent | None = None
-        try:
-            provider = normalize_provider(self.settings.browser_agent_provider)
-            llm = build_browser_use_llm(self.settings)
-        except ProviderConfigurationError as exc:
-            return QueueGradingTaskResult(
-                job_id=job_id,
-                status="failed",
-                summary=str(exc),
-                agent_provider=self.settings.browser_agent_provider,
-                agent_model=self._resolved_browser_agent_model(),
-                current_url=payload.target_url,
-                screenshot_path=payload.screenshot_path,
-                extracted_text=None,
-                processed_items=0,
-                queue_empty=False,
-                last_points_entered=None,
-                last_submission_excerpt=None,
-                steps=[
-                    {
-                        "name": "configuration_check",
-                        "status": "failed",
-                        "detail": str(exc),
-                    }
-                ],
-            )
-
+        provider = normalize_provider(self.settings.browser_agent_provider)
         artifact_dir = self._artifact_dir()
         screenshot_path = Path(payload.screenshot_path) if payload.screenshot_path else artifact_dir / f"{job_id}.png"
         browser_session = self._build_session(payload.target_url, job_id)
-        total_points = round(sum(item.max_score for item in payload.criteria), 2)
-        criteria_text = "\n".join(
-            f"- {item.label}: {item.description} (max {item.max_score}, weight {item.weight})"
-            for item in payload.criteria
-        )
-        action_instruction = (
-            "Do not change the page; only explain what score you would enter and where."
-            if payload.dry_run
-            else "Type only the numeric score into the separate points field."
-        )
-        submit_instruction = (
-            "After typing the number, click the obvious save/submit action for each processed item."
-            if payload.submit_after_typing
-            else "Do not click a final submit or save action unless it is required to keep the typed number visible."
-        )
-        hybrid_automation_context = self._hybrid_automation_prompt_context(payload.target_url)
-
-        agent = Agent(
-            task=(
-                f"Open {payload.target_url} and navigate the exercise queue. {payload.queue_instruction} "
-                "Each exercise contains a student text submission that is only a word, phrase, or paragraph. "
-                f"Teacher task title: {payload.task_title}. "
-                f"Teacher criteria:\n{criteria_text}\n"
-                f"Total available points: {total_points}. "
-                f"Teacher strictness: {payload.preferences.strictness}. "
-                f"Teacher tone: {payload.preferences.tone}. "
-                f"Teacher guidance: {payload.preferences.grading_guidance}. "
-                f"Points field hint: {payload.points_field_hint}. "
-                f"{action_instruction} {submit_instruction} "
-                f"Process at most {payload.max_items} pending exercises. "
-                "Use the visible page state only to confirm where you are. Prefer DOM text and semantic controls for navigation and control selection. "
-                "Always read the submission text from the page, score it against the teacher criteria, and use only a numeric value in the points field. "
-                f"{hybrid_automation_context} "
-                "Skip already graded items. Return a structured summary when done."
-            ),
-            llm=llm,
-            browser_session=browser_session,
-            output_model_schema=QueueGradingAgentOutput,
-            directly_open_url=True,
-            **self._agent_kwargs(),
-        )
-
         try:
+            if self._is_sanomapro_queue_target(payload.target_url):
+                await browser_session.start()
+                return await self._grade_sanomapro_queue_deterministically(
+                    payload,
+                    job_id,
+                    provider=provider,
+                    browser_session=browser_session,
+                    screenshot_path=screenshot_path,
+                )
+
+            try:
+                llm = build_browser_use_llm(self.settings)
+            except ProviderConfigurationError as exc:
+                return QueueGradingTaskResult(
+                    job_id=job_id,
+                    status="failed",
+                    summary=str(exc),
+                    agent_provider=self.settings.browser_agent_provider,
+                    agent_model=self._resolved_browser_agent_model(),
+                    current_url=payload.target_url,
+                    screenshot_path=payload.screenshot_path,
+                    extracted_text=None,
+                    processed_items=0,
+                    queue_empty=False,
+                    last_points_entered=None,
+                    last_submission_excerpt=None,
+                    steps=[
+                        {
+                            "name": "configuration_check",
+                            "status": "failed",
+                            "detail": str(exc),
+                        }
+                    ],
+                )
+
+            total_points = round(sum(item.max_score for item in payload.criteria), 2)
+            criteria_text = "\n".join(
+                f"- {item.label}: {item.description} (max {item.max_score}, weight {item.weight})"
+                for item in payload.criteria
+            )
+            action_instruction = (
+                "Do not change the page; only explain what score you would enter and where."
+                if payload.dry_run
+                else "Type only the numeric score into the separate points field."
+            )
+            submit_instruction = (
+                "After typing the number, click the obvious save/submit action for each processed item."
+                if payload.submit_after_typing
+                else "Do not click a final submit or save action unless it is required to keep the typed number visible."
+            )
+            hybrid_automation_context = self._hybrid_automation_prompt_context(payload.target_url)
+
+            agent = Agent(
+                task=(
+                    f"Open {payload.target_url} and navigate the exercise queue. {payload.queue_instruction} "
+                    "Each exercise contains a student text submission that is only a word, phrase, or paragraph. "
+                    f"Teacher task title: {payload.task_title}. "
+                    f"Teacher criteria:\n{criteria_text}\n"
+                    f"Total available points: {total_points}. "
+                    f"Teacher strictness: {payload.preferences.strictness}. "
+                    f"Teacher tone: {payload.preferences.tone}. "
+                    f"Teacher guidance: {payload.preferences.grading_guidance}. "
+                    f"Points field hint: {payload.points_field_hint}. "
+                    f"{action_instruction} {submit_instruction} "
+                    f"Process at most {payload.max_items} pending exercises. "
+                    "Use the visible page state only to confirm where you are. Prefer DOM text and semantic controls for navigation and control selection. "
+                    "Always read the submission text from the page, score it against the teacher criteria, and use only a numeric value in the points field. "
+                    f"{hybrid_automation_context} "
+                    "Skip already graded items. Return a structured summary when done."
+                ),
+                llm=llm,
+                browser_session=browser_session,
+                output_model_schema=QueueGradingAgentOutput,
+                directly_open_url=True,
+                **self._agent_kwargs(),
+            )
+
             await browser_session.start()
             step_limit = 10 if provider == "ollama" else max(20, payload.max_items * 8)
             history = await agent.run(max_steps=step_limit)
