@@ -154,6 +154,9 @@ class QueueGradingTaskCreate(BaseModel):
 
 class ExamSessionGradingTaskCreate(BaseModel):
     instructions: str
+    grading_model_provider: str | None = None
+    grading_model_name: str | None = None
+    grading_reasoning_level: str | None = None
     dry_run: bool = False
     submit_after_typing: bool = False
     max_steps: int = Field(default=260, ge=20, le=800)
@@ -211,6 +214,9 @@ class GuiPromptTemplate(BaseModel):
     prompt_id: str
     title: str
     body: str
+    model_provider: str = "vertex_ai"
+    model_name: str = "gemini-3.1-pro-preview"
+    reasoning_level: str = "medium"
     built_in: bool = False
 
 
@@ -218,6 +224,9 @@ class GuiPromptSaveRequest(BaseModel):
     prompt_id: str | None = None
     title: str
     body: str
+    model_provider: str
+    model_name: str
+    reasoning_level: str
 
 
 class GuiExerciseColumn(BaseModel):
@@ -254,11 +263,43 @@ class GuiGradeExerciseRequest(BaseModel):
     instructions: str
     prompt_id: str | None = None
     prompt_title: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    reasoning_level: str | None = None
     max_steps: int = Field(default=260, ge=20, le=800)
 
 
 class GuiGradeExerciseResponse(BaseModel):
     result: ExamSessionGradingTaskResult
+    exercises: list[GuiExerciseColumn] = Field(default_factory=list)
+
+
+class GuiAutopilotQueueItemRequest(BaseModel):
+    column_key: str
+    instructions: str
+    prompt_id: str | None = None
+    prompt_title: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    reasoning_level: str | None = None
+    max_steps: int = Field(default=260, ge=20, le=800)
+
+
+class GuiAutopilotQueueItemResult(BaseModel):
+    column_key: str
+    exercise_title: str | None = None
+    prompt_id: str | None = None
+    prompt_title: str | None = None
+    result: ExamSessionGradingTaskResult
+
+
+class GuiAutopilotRunRequest(BaseModel):
+    items: list[GuiAutopilotQueueItemRequest] = Field(default_factory=list, min_length=1)
+
+
+class GuiAutopilotRunResponse(BaseModel):
+    summary: str = ""
+    items: list[GuiAutopilotQueueItemResult] = Field(default_factory=list)
     exercises: list[GuiExerciseColumn] = Field(default_factory=list)
 
 
@@ -284,6 +325,7 @@ class GuiStatisticsEntry(BaseModel):
     submitted_prompt_text: str = ""
     model_provider: str | None = None
     model_name: str | None = None
+    reasoning_level: str | None = None
     model_response_text: str = ""
     repair_prompt_text: str = ""
     repair_response_text: str = ""

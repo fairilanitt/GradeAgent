@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import cmd
+import json
 import os
 import plistlib
 import shlex
@@ -161,13 +162,34 @@ def _gui_backend_route_ready(url: str, timeout_seconds: float = 1.0) -> bool:
         return False
 
 
+def _gui_backend_json(url: str, timeout_seconds: float = 1.0):
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
+            if response.status != 200:
+                return None
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+
+def _gui_backend_prompts_schema_ready(timeout_seconds: float = 1.0) -> bool:
+    payload = _gui_backend_json(_gui_backend_prompts_url(), timeout_seconds=timeout_seconds)
+    if not isinstance(payload, list):
+        return False
+    if not payload:
+        return True
+    first_prompt = payload[0]
+    if not isinstance(first_prompt, dict):
+        return False
+    required_keys = {"prompt_id", "title", "body", "model_provider", "model_name", "reasoning_level", "built_in"}
+    return required_keys.issubset(first_prompt.keys())
+
+
 def _gui_backend_is_compatible(timeout_seconds: float = 1.0) -> bool:
-    required_urls = (
-        _gui_backend_state_url(),
-        _gui_backend_prompts_url(),
-        _gui_backend_statistics_url(),
-    )
-    return all(_gui_backend_route_ready(url, timeout_seconds=timeout_seconds) for url in required_urls)
+    required_urls = (_gui_backend_state_url(), _gui_backend_statistics_url())
+    if not all(_gui_backend_route_ready(url, timeout_seconds=timeout_seconds) for url in required_urls):
+        return False
+    return _gui_backend_prompts_schema_ready(timeout_seconds=timeout_seconds)
 
 
 def _terminate_gui_backend_process() -> bool:

@@ -22,12 +22,14 @@ from app.services.ollama_browser_llm import EfficientBrowserUseChatOllama
 
 ProviderName = Literal["openai", "anthropic", "google", "vertex_ai", "ollama", "heuristic"]
 RoutingTier = Literal["simple", "standard", "complex"]
+ExplicitReasoningLevel = Literal["off", "low", "medium", "high"]
 DEFAULT_ROUTER_PROVIDER: ProviderName = "ollama"
 DEFAULT_VISUAL_BROWSER_MODEL = "qwen3-vl:4b"
+DEFAULT_VERTEX_AI_GRADING_MODEL = "gemini-3.1-pro-preview"
 GOOGLE_FREE_TIER_BLOCKED_MODELS = (
+    "gemini-3-pro-preview",
     "gemini-3.1-pro-preview",
     "gemini-3.1-pro-preview-customtools",
-    "gemini-3-pro-preview",
     "gemini-3-pro-image-preview",
 )
 
@@ -64,6 +66,76 @@ OLLAMA_VISION_MODEL_MARKERS = (
     "minicpm-v",
     "moondream",
 )
+
+
+@dataclass(frozen=True)
+class VertexAIGradingModelOption:
+    model_name: str
+    title: str
+    subtitle: str
+
+
+VERTEX_AI_GRADING_MODEL_OPTIONS: tuple[VertexAIGradingModelOption, ...] = (
+    VertexAIGradingModelOption(
+        model_name="gemini-3.1-pro-preview",
+        title="Gemini 3.1 Pro",
+        subtitle="Vertex AI Preview",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-3-pro-preview",
+        title="Gemini 3 Pro",
+        subtitle="Vertex AI Preview",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-3.1-flash-lite-preview",
+        title="Gemini 3.1 Flash-Lite",
+        subtitle="Vertex AI Preview",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-3-flash-preview",
+        title="Gemini 3 Flash",
+        subtitle="Vertex AI Preview",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-2.5-pro",
+        title="Gemini 2.5 Pro",
+        subtitle="Vertex AI",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-2.5-flash",
+        title="Gemini 2.5 Flash",
+        subtitle="Vertex AI",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-2.5-flash-lite",
+        title="Gemini 2.5 Flash-Lite",
+        subtitle="Vertex AI",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-2.5-flash-preview-09-2025",
+        title="Gemini 2.5 Flash",
+        subtitle="Vertex AI Preview 09-2025",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-2.5-flash-lite-preview-09-2025",
+        title="Gemini 2.5 Flash-Lite",
+        subtitle="Vertex AI Preview 09-2025",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-2.0-flash-001",
+        title="Gemini 2.0 Flash",
+        subtitle="Vertex AI",
+    ),
+    VertexAIGradingModelOption(
+        model_name="gemini-2.0-flash-lite-001",
+        title="Gemini 2.0 Flash-Lite",
+        subtitle="Vertex AI",
+    ),
+)
+VERTEX_AI_GRADING_MODEL_NAMES = frozenset(item.model_name for item in VERTEX_AI_GRADING_MODEL_OPTIONS)
+LEGACY_VERTEX_AI_MODEL_ALIASES: dict[str, str] = {
+    "gemini-3.1-pro-preview-customtools": "gemini-3.1-pro-preview",
+}
 
 
 class ProviderConfigurationError(ValueError):
@@ -119,6 +191,37 @@ def normalize_provider(provider: str) -> ProviderName:
         supported = ", ".join(sorted(PROVIDER_ALIASES))
         raise ProviderConfigurationError(f"Unsupported model provider '{provider}'. Supported values: {supported}.")
     return normalized
+
+
+def vertex_ai_grading_model_options() -> tuple[VertexAIGradingModelOption, ...]:
+    return VERTEX_AI_GRADING_MODEL_OPTIONS
+
+
+def normalize_vertex_ai_model_name(model_name: str | None) -> str:
+    normalized = (model_name or "").strip()
+    if not normalized:
+        return DEFAULT_VERTEX_AI_GRADING_MODEL
+
+    normalized = LEGACY_VERTEX_AI_MODEL_ALIASES.get(normalized, normalized)
+    if normalized not in VERTEX_AI_GRADING_MODEL_NAMES:
+        supported = ", ".join(option.model_name for option in VERTEX_AI_GRADING_MODEL_OPTIONS)
+        raise ProviderConfigurationError(
+            "Unsupported Vertex AI grading model "
+            f"'{model_name}'. Supported values: {supported}."
+        )
+    return normalized
+
+
+def normalize_vertex_ai_grading_selection(provider: str, model_name: str | None) -> tuple[ProviderName, str]:
+    provider_name = normalize_provider(provider)
+    if provider_name == "google":
+        provider_name = "vertex_ai"
+    if provider_name != "vertex_ai":
+        raise ProviderConfigurationError(
+            "Prompt-based Sanoma grading supports Vertex AI models only. "
+            "Choose a Vertex AI Gemini model in the criteria library."
+        )
+    return provider_name, normalize_vertex_ai_model_name(model_name)
 
 
 def _provider_key(provider: ProviderName, settings: Settings) -> str | None:
@@ -214,12 +317,34 @@ def _normalize_vertex_ai_thinking_level(value: str) -> str | None:
     )
 
 
+def normalize_reasoning_level(value: str | None) -> ExplicitReasoningLevel:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return "medium"
+    if normalized in {"none", "false", "0"}:
+        return "off"
+    supported: set[str] = {"off", "low", "medium", "high"}
+    if normalized not in supported:
+        raise ProviderConfigurationError(
+            "Unsupported reasoning level "
+            f"'{value}'. Supported values: {', '.join(sorted(supported))}."
+        )
+    return normalized  # type: ignore[return-value]
+
+
 def vertex_ai_thinking_level(settings: Settings, routing_tier: RoutingTier) -> str | None:
     if routing_tier == "simple":
         return _normalize_vertex_ai_thinking_level(settings.vertex_ai_simple_thinking_level)
     if routing_tier == "standard":
         return _normalize_vertex_ai_thinking_level(settings.vertex_ai_standard_thinking_level)
     return _normalize_vertex_ai_thinking_level(settings.vertex_ai_complex_thinking_level)
+
+
+def explicit_vertex_ai_thinking_level(reasoning_level: str | None) -> str | None:
+    normalized = normalize_reasoning_level(reasoning_level)
+    if normalized == "off":
+        return None
+    return normalized.upper()
 
 
 def _resolve_vertex_ai_project(settings: Settings) -> str | None:
@@ -320,7 +445,9 @@ def _vertex_ai_thinking_config(
     model_name: str,
 ) -> genai_types.ThinkingConfig | None:
     normalized_level = (thinking_level or "").strip().upper()
-    if not normalized_level or not model_name.strip().lower().startswith("gemini-3"):
+    normalized_model_name = model_name.strip().lower()
+    supports_thinking = normalized_model_name.startswith("gemini-3") or normalized_model_name.startswith("gemini-2.5")
+    if not normalized_level or not supports_thinking:
         return None
     return genai_types.ThinkingConfig(
         includeThoughts=False,
@@ -371,6 +498,9 @@ def resolve_provider_model_name(provider: str, model_name: str, settings: Settin
     normalized_provider = normalize_provider(provider)
     resolved_model_name = model_name.strip()
 
+    if normalized_provider == "vertex_ai":
+        resolved_model_name = normalize_vertex_ai_model_name(resolved_model_name)
+
     if normalized_provider == "google":
         resolved_model_name = resolve_google_model_name(resolved_model_name, settings)
 
@@ -383,6 +513,13 @@ def _normalize_reasoning_mode(value: str) -> bool | str:
         return False
     if normalized in {"1", "true", "on"}:
         return True
+    return normalized
+
+
+def explicit_ollama_reasoning_mode(reasoning_level: str | None) -> bool | str:
+    normalized = normalize_reasoning_level(reasoning_level)
+    if normalized == "off":
+        return False
     return normalized
 
 
@@ -416,6 +553,7 @@ def build_explicit_grading_chat_model(
     provider: str,
     model_name: str,
     routing_tier: RoutingTier = "standard",
+    reasoning_level: str | None = None,
 ) -> BaseChatModel:
     provider_name, resolved_model_name = resolve_provider_model_name(provider, model_name, settings)
 
@@ -438,6 +576,11 @@ def build_explicit_grading_chat_model(
         )
 
     if provider_name == "ollama":
+        resolved_reasoning = (
+            explicit_ollama_reasoning_mode(reasoning_level)
+            if reasoning_level is not None
+            else grading_reasoning_mode(settings, routing_tier)
+        )
         return LangChainChatOllama(
             model=resolved_model_name,
             base_url=require_ollama_host(settings, "grading"),
@@ -445,18 +588,23 @@ def build_explicit_grading_chat_model(
             num_ctx=settings.ollama_grading_num_ctx,
             num_predict=settings.ollama_grading_num_predict,
             keep_alive=settings.ollama_keep_alive,
-            reasoning=grading_reasoning_mode(settings, routing_tier),
+            reasoning=resolved_reasoning,
             format="json",
         )
 
     if provider_name == "vertex_ai":
         client_kwargs = _vertex_ai_client_kwargs(settings)
+        thinking_level = (
+            explicit_vertex_ai_thinking_level(reasoning_level)
+            if reasoning_level is not None
+            else vertex_ai_thinking_level(settings, routing_tier)
+        )
         return VertexAIChatModel(
             model=resolved_model_name,
             project=client_kwargs["project"],
             location=client_kwargs["location"],
             api_key=client_kwargs.get("api_key"),
-            thinking_level=vertex_ai_thinking_level(settings, routing_tier),
+            thinking_level=thinking_level,
             temperature=0,
         )
 

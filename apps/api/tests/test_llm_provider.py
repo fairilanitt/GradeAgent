@@ -3,13 +3,17 @@ import pytest
 from app.config import Settings
 from app.schemas.api import CriterionDefinition
 from app.services.llm_provider import (
+    DEFAULT_VERTEX_AI_GRADING_MODEL,
     ProviderConfigurationError,
     VertexAIChatModel,
     browser_model_supports_vision,
     build_explicit_grading_chat_model,
     build_browser_use_llm,
     grading_reasoning_mode,
+    normalize_reasoning_level,
     normalize_provider,
+    normalize_vertex_ai_grading_selection,
+    normalize_vertex_ai_model_name,
     require_ollama_host,
     require_ollama_model_available,
     resolve_browser_model_name,
@@ -215,13 +219,26 @@ def test_google_free_tier_remaps_pro_model_to_flash_preview() -> None:
         }
     )
 
-    assert resolve_google_model_name("gemini-3.1-pro-preview", settings) == "gemini-3-flash-preview"
+    assert resolve_google_model_name("gemini-3-pro-preview", settings) == "gemini-3-flash-preview"
 
 
 def test_google_paid_tier_can_keep_pro_model() -> None:
     settings = Settings().model_copy(update={"google_api_free_tier_only": False})
 
-    assert resolve_google_model_name("gemini-3.1-pro-preview", settings) == "gemini-3.1-pro-preview"
+    assert resolve_google_model_name("gemini-3-pro-preview", settings) == "gemini-3-pro-preview"
+
+
+def test_vertex_ai_model_aliases_normalize_to_current_vertex_ids() -> None:
+    assert normalize_vertex_ai_model_name("gemini-3.1-pro-preview") == "gemini-3.1-pro-preview"
+    assert normalize_vertex_ai_model_name("gemini-3.1-pro-preview-customtools") == "gemini-3.1-pro-preview"
+    assert normalize_vertex_ai_model_name(DEFAULT_VERTEX_AI_GRADING_MODEL) == "gemini-3.1-pro-preview"
+
+
+def test_vertex_ai_grading_selection_maps_legacy_google_picker_to_vertex() -> None:
+    provider, model_name = normalize_vertex_ai_grading_selection("google", "gemini-2.5-flash-lite")
+
+    assert provider == "vertex_ai"
+    assert model_name == "gemini-2.5-flash-lite"
 
 
 def test_vertex_ai_thinking_levels_follow_routing_tier() -> None:
@@ -236,6 +253,13 @@ def test_vertex_ai_thinking_levels_follow_routing_tier() -> None:
     assert vertex_ai_thinking_level(settings, "simple") == "LOW"
     assert vertex_ai_thinking_level(settings, "standard") == "MEDIUM"
     assert vertex_ai_thinking_level(settings, "complex") == "HIGH"
+
+
+def test_normalize_reasoning_level_accepts_supported_values() -> None:
+    assert normalize_reasoning_level("off") == "off"
+    assert normalize_reasoning_level("LOW") == "low"
+    assert normalize_reasoning_level("medium") == "medium"
+    assert normalize_reasoning_level(None) == "medium"
 
 
 def test_build_explicit_grading_chat_model_supports_vertex_ai() -> None:
@@ -258,6 +282,26 @@ def test_build_explicit_grading_chat_model_supports_vertex_ai() -> None:
     assert model.project == "gradeagent-test"
     assert model.location == "global"
     assert model.thinking_level == "MEDIUM"
+
+
+def test_build_explicit_grading_chat_model_accepts_reasoning_override_for_vertex_ai() -> None:
+    settings = Settings().model_copy(
+        update={
+            "vertex_ai_project": "gradeagent-test",
+            "vertex_ai_location": "global",
+        }
+    )
+
+    model = build_explicit_grading_chat_model(
+        settings,
+        provider="vertex_ai",
+        model_name="gemini-2.5-pro",
+        routing_tier="standard",
+        reasoning_level="low",
+    )
+
+    assert isinstance(model, VertexAIChatModel)
+    assert model.thinking_level == "LOW"
 
 
 def test_build_explicit_grading_chat_model_supports_vertex_ai_api_key_mode() -> None:

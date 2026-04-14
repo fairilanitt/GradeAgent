@@ -20,6 +20,9 @@ from app.schemas.api import (
     AssessmentCreate,
     BrowserTaskCreate,
     BrowserTaskResult,
+    GuiAutopilotQueueItemResult,
+    GuiAutopilotRunRequest,
+    GuiAutopilotRunResponse,
     GradeRunCreate,
     GuiBrowserStartResponse,
     GuiExerciseColumn,
@@ -66,6 +69,9 @@ def _map_gui_prompt(prompt) -> GuiPromptTemplate:
         prompt_id=prompt.prompt_id,
         title=prompt.title,
         body=prompt.body,
+        model_provider=prompt.model_provider,
+        model_name=prompt.model_name,
+        reasoning_level=prompt.reasoning_level,
         built_in=prompt.built_in,
     )
 
@@ -154,6 +160,9 @@ def save_gui_prompt(payload: GuiPromptSaveRequest) -> GuiPromptTemplate:
             prompt_id=payload.prompt_id,
             title=payload.title,
             body=payload.body,
+            model_provider=payload.model_provider,
+            model_name=payload.model_name,
+            reasoning_level=payload.reasoning_level,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -169,12 +178,42 @@ def grade_gui_exercise(payload: GuiGradeExerciseRequest) -> GuiGradeExerciseResp
             instructions=payload.instructions,
             prompt_id=payload.prompt_id,
             prompt_title=payload.prompt_title,
+            model_provider=payload.model_provider,
+            model_name=payload.model_name,
+            reasoning_level=payload.reasoning_level,
             max_steps=payload.max_steps,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return GuiGradeExerciseResponse(
         result=result,
+        exercises=[
+            _map_gui_column(column)
+            for column in overview_state.exercise_columns
+            if column.pending_cell_count > 0
+        ],
+    )
+
+
+@router.post("/gui/autopilot/run", response_model=GuiAutopilotRunResponse)
+def run_gui_autopilot(payload: GuiAutopilotRunRequest) -> GuiAutopilotRunResponse:
+    runtime = get_gui_runtime()
+    try:
+        item_results, overview_state, summary = runtime.grade_exercise_queue(items=payload.items)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GuiAutopilotRunResponse(
+        summary=summary,
+        items=[
+            GuiAutopilotQueueItemResult(
+                column_key=item.column_key,
+                exercise_title=result.current_exercise_label,
+                prompt_id=item.prompt_id,
+                prompt_title=item.prompt_title,
+                result=result,
+            )
+            for item, result in item_results
+        ],
         exercises=[
             _map_gui_column(column)
             for column in overview_state.exercise_columns

@@ -3,6 +3,7 @@ import SwiftUI
 
 enum AppPage: String, CaseIterable, Identifiable {
     case ohjaus
+    case autopilot
     case kriteerit
     case tilastot
     case lokit
@@ -13,6 +14,8 @@ enum AppPage: String, CaseIterable, Identifiable {
         switch self {
         case .ohjaus:
             return "Ohjaus"
+        case .autopilot:
+            return "Autopilot"
         case .kriteerit:
             return "Kriteerit"
         case .tilastot:
@@ -26,6 +29,8 @@ enum AppPage: String, CaseIterable, Identifiable {
         switch self {
         case .ohjaus:
             return "slider.horizontal.3"
+        case .autopilot:
+            return "list.number"
         case .kriteerit:
             return "books.vertical"
         case .tilastot:
@@ -46,13 +51,20 @@ final class GuiStore: ObservableObject {
     @Published var statisticsRuns: [GuiStatisticsRun] = []
     @Published var selectedPromptByColumn: [String: String] = [:]
     @Published var selectedExerciseColumnKey: String?
+    @Published var autopilotQueueColumnKeys: [String] = []
+    @Published var draggedAutopilotColumnKey: String?
+    @Published var autopilotResults: [GuiAutopilotQueueItemResult] = []
+    @Published var autopilotRunning = false
     @Published var selectedLibraryPromptId: String?
     @Published var draftPromptId: String?
     @Published var draftPromptTitle = ""
     @Published var draftPromptBody = ""
+    @Published var draftPromptModelProvider = "vertex_ai"
+    @Published var draftPromptModelName = "gemini-3.1-pro-preview"
+    @Published var draftPromptReasoningLevel = "medium"
     @Published var draftPromptBuiltIn = false
     @Published var promptSearchText = ""
-    @Published var statusMessage = "Avaa selain vihreällä painikkeella. Kun siirryt Sanoman kokeen yleisnäkymään, arvioitavat tehtävät tunnistetaan automaattisesti."
+    @Published var statusMessage = "Avaa selain vihreällä painikkeella. Kun siirryt kokeen yleisnäkymään, arvioitavat tehtävät tunnistetaan automaattisesti."
     @Published var resultMessage = "Yhtään tehtävää ei ole vielä arvioitu."
     @Published var isStartingBrowser = false
     @Published var isRefreshingOverview = false
@@ -115,6 +127,16 @@ final class GuiStore: ObservableObject {
 
     var statisticsRunCount: Int {
         statisticsRuns.count
+    }
+
+    var autopilotQueueExercises: [GuiExerciseColumn] {
+        let exerciseMap = Dictionary(uniqueKeysWithValues: (overview?.exercises ?? []).map { ($0.columnKey, $0) })
+        return autopilotQueueColumnKeys.compactMap { exerciseMap[$0] }
+    }
+
+    var availableAutopilotExercises: [GuiExerciseColumn] {
+        let queuedKeys = Set(autopilotQueueColumnKeys)
+        return (overview?.exercises ?? []).filter { !queuedKeys.contains($0.columnKey) }
     }
 
     var statisticsEntryCount: Int {
@@ -186,6 +208,8 @@ final class GuiStore: ObservableObject {
             overview = nil
             selectedPromptByColumn = [:]
             selectedExerciseColumnKey = nil
+            autopilotQueueColumnKeys = []
+            autopilotResults = []
             isStopGradingRequested = false
             statusMessage = "Selain on auki. Siirry Sanoman kokeen yleisnäkymään, niin tehtävät ilmestyvät tähän automaattisesti."
             resultMessage = "Selaimen istunto on valmis: \(response.sessionId)"
@@ -210,7 +234,7 @@ final class GuiStore: ObservableObject {
             applyOverviewResponse(response, source: .manual)
         } catch {
             latestErrorMessage = error.localizedDescription
-            statusMessage = "Sanoman yleisnäkymää ei voitu lukea."
+            statusMessage = "Yleisnäkymää ei voitu lukea."
         }
     }
 
@@ -223,6 +247,10 @@ final class GuiStore: ObservableObject {
             overview = nil
             selectedPromptByColumn = [:]
             selectedExerciseColumnKey = nil
+            autopilotQueueColumnKeys = []
+            autopilotResults = []
+            autopilotRunning = false
+            draggedAutopilotColumnKey = nil
             isStopGradingRequested = false
             isAutoDetectingOverview = false
             overviewAutoDetectionTask?.cancel()
@@ -236,11 +264,13 @@ final class GuiStore: ObservableObject {
     }
 
     func gradeExercise(_ exercise: GuiExerciseColumn) async {
-        await ensurePromptsLoadedIfNeeded()
-        guard gradingColumnKey == nil else { return }
-        guard selectedExerciseColumnKey == exercise.columnKey else {
-            latestErrorMessage = "Valitse ensin tehtäväkortti, jonka haluat arvioida."
+        guard await reloadPrompts() else {
+            statusMessage = "Kriteerejä ei voitu päivittää ennen arvioinnin aloitusta."
             return
+        }
+        guard gradingColumnKey == nil else { return }
+        if selectedExerciseColumnKey != exercise.columnKey {
+            selectExercise(exercise)
         }
         guard let prompt = selectedPrompt(for: exercise) else {
             latestErrorMessage = "Valitse tehtävälle kriteeri ennen arvioinnin käynnistystä."
@@ -263,6 +293,9 @@ final class GuiStore: ObservableObject {
                     instructions: prompt.body,
                     promptId: prompt.promptId,
                     promptTitle: prompt.title,
+                    modelProvider: prompt.modelProvider,
+                    modelName: prompt.modelName,
+                    reasoningLevel: prompt.reasoningLevel,
                     maxSteps: 260
                 )
             )
@@ -274,10 +307,9 @@ final class GuiStore: ObservableObject {
                 exercises: response.exercises
             )
             syncExercisePromptSelections()
+            syncAutopilotQueueWithOverview()
             selectedExerciseColumnKey = nil
-            if let refreshedStatistics = try? await apiClient.statistics() {
-                statisticsRuns = refreshedStatistics.runs
-            }
+            await refreshStatistics()
             statusMessage = isStopGradingRequested
                 ? "Arviointi pysäytettiin hallitusti. Selain on yhä auki seuraavaa valintaa varten."
                 : "Selain on yhä auki. Valitse seuraava tehtävä, kun haluat jatkaa."
@@ -290,7 +322,7 @@ final class GuiStore: ObservableObject {
     }
 
     func stopCurrentGrading() async {
-        guard gradingColumnKey != nil else { return }
+        guard gradingColumnKey != nil || autopilotRunning else { return }
         guard !isStopGradingRequested else { return }
         latestErrorMessage = nil
         isStopGradingRequested = true
@@ -302,6 +334,98 @@ final class GuiStore: ObservableObject {
             isStopGradingRequested = false
             latestErrorMessage = error.localizedDescription
             statusMessage = "Arvioinnin pysäytyspyyntö epäonnistui."
+        }
+    }
+
+    func enqueueAutopilotExercise(_ exercise: GuiExerciseColumn) {
+        guard !autopilotQueueColumnKeys.contains(exercise.columnKey) else { return }
+        autopilotQueueColumnKeys.append(exercise.columnKey)
+        latestErrorMessage = nil
+    }
+
+    func removeAutopilotExercise(_ columnKey: String) {
+        autopilotQueueColumnKeys.removeAll { $0 == columnKey }
+        if draggedAutopilotColumnKey == columnKey {
+            draggedAutopilotColumnKey = nil
+        }
+    }
+
+    func moveAutopilotExercise(_ columnKey: String, before targetColumnKey: String) {
+        guard columnKey != targetColumnKey else { return }
+        guard let fromIndex = autopilotQueueColumnKeys.firstIndex(of: columnKey),
+              let targetIndex = autopilotQueueColumnKeys.firstIndex(of: targetColumnKey) else {
+            return
+        }
+        let item = autopilotQueueColumnKeys.remove(at: fromIndex)
+        let adjustedIndex = fromIndex < targetIndex ? max(targetIndex - 1, 0) : targetIndex
+        autopilotQueueColumnKeys.insert(item, at: adjustedIndex)
+    }
+
+    func startAutopilot() async {
+        guard await reloadPrompts() else {
+            statusMessage = "Kriteerejä ei voitu päivittää ennen Autopilotin aloitusta."
+            return
+        }
+        guard gradingColumnKey == nil, !autopilotRunning else { return }
+        let queuedExercises = autopilotQueueExercises
+        guard !queuedExercises.isEmpty else {
+            latestErrorMessage = "Lisää Autopilotiin ainakin yksi tehtävä ennen aloitusta."
+            return
+        }
+
+        var items: [GuiAutopilotQueueItemRequest] = []
+        for exercise in queuedExercises {
+            guard let prompt = selectedPrompt(for: exercise) else {
+                latestErrorMessage = "Valitse kaikille Autopilotin tehtäville kriteeri ennen aloitusta."
+                return
+            }
+            items.append(
+                GuiAutopilotQueueItemRequest(
+                    columnKey: exercise.columnKey,
+                    instructions: prompt.body,
+                    promptId: prompt.promptId,
+                    promptTitle: prompt.title,
+                    modelProvider: prompt.modelProvider,
+                    modelName: prompt.modelName,
+                    reasoningLevel: prompt.reasoningLevel,
+                    maxSteps: 260
+                )
+            )
+        }
+
+        autopilotRunning = true
+        isStopGradingRequested = false
+        latestErrorMessage = nil
+        statusMessage = "Autopilot aloittaa \(queuedExercises.count) tehtävän arvioinnin määritetyssä järjestyksessä..."
+        defer {
+            autopilotRunning = false
+            isStopGradingRequested = false
+            gradingColumnKey = nil
+            draggedAutopilotColumnKey = nil
+        }
+
+        do {
+            let response = try await apiClient.runAutopilot(GuiAutopilotRunRequest(items: items))
+            autopilotResults = response.items
+            overview = GuiOverviewResponse(
+                assignmentTitle: overview?.assignmentTitle ?? "",
+                groupName: overview?.groupName,
+                studentsAnsweredCount: overview?.studentsAnsweredCount,
+                studentsTotalCount: overview?.studentsTotalCount,
+                exercises: response.exercises
+            )
+            syncExercisePromptSelections()
+            syncAutopilotQueueWithOverview()
+            await refreshStatistics()
+            statusMessage = isStopGradingRequested
+                ? "Autopilot pysäytettiin hallitusti. Selain on yhä auki."
+                : "Autopilot suoritettiin loppuun. Selain on yhä auki seuraavaa ajoa varten."
+            resultMessage = response.summary
+        } catch {
+            latestErrorMessage = error.localizedDescription
+            statusMessage = isStopGradingRequested
+                ? "Autopilotin pysäytyspyyntö epäonnistui."
+                : "Autopilotin suoritus epäonnistui."
         }
     }
 
@@ -317,13 +441,20 @@ final class GuiStore: ObservableObject {
 
     func ensurePromptsLoadedIfNeeded() async {
         guard prompts.isEmpty else { return }
+        _ = await reloadPrompts()
+    }
+
+    @discardableResult
+    func reloadPrompts() async -> Bool {
         do {
             let resolvedPrompts = try await apiClient.prompts()
             prompts = resolvedPrompts
             syncDraftSelection()
             syncExercisePromptSelections()
+            return true
         } catch {
             latestErrorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -364,6 +495,10 @@ final class GuiStore: ObservableObject {
                     overview = nil
                     selectedPromptByColumn = [:]
                     selectedExerciseColumnKey = nil
+                    autopilotQueueColumnKeys = []
+                    autopilotResults = []
+                    autopilotRunning = false
+                    draggedAutopilotColumnKey = nil
                     isAutoDetectingOverview = false
                     overviewAutoDetectionTask?.cancel()
                     overviewAutoDetectionTask = nil
@@ -391,6 +526,7 @@ final class GuiStore: ObservableObject {
 
         overview = response
         syncExercisePromptSelections()
+        syncAutopilotQueueWithOverview()
 
         if response.exercises.isEmpty {
             statusMessage = "Kokeen yleisnäkymä havaittiin, mutta arvioimattomia tehtäviä ei löytynyt."
@@ -432,7 +568,10 @@ final class GuiStore: ObservableObject {
                 GuiPromptSaveRequest(
                     promptId: draftPromptId,
                     title: draftPromptTitle,
-                    body: draftPromptBody
+                    body: draftPromptBody,
+                    modelProvider: draftPromptModelProvider,
+                    modelName: draftPromptModelName,
+                    reasoningLevel: draftPromptReasoningLevel
                 )
             )
             if let index = prompts.firstIndex(where: { $0.promptId == savedPrompt.promptId }) {
@@ -457,12 +596,18 @@ final class GuiStore: ObservableObject {
             draftPromptId = nil
             draftPromptTitle = ""
             draftPromptBody = ""
+            draftPromptModelProvider = "vertex_ai"
+            draftPromptModelName = "gemini-3.1-pro-preview"
+            draftPromptReasoningLevel = "medium"
             draftPromptBuiltIn = false
             return
         }
         draftPromptId = prompt.promptId
         draftPromptTitle = prompt.title
         draftPromptBody = prompt.body
+        draftPromptModelProvider = prompt.modelProvider
+        draftPromptModelName = prompt.modelName
+        draftPromptReasoningLevel = prompt.reasoningLevel
         draftPromptBuiltIn = prompt.builtIn
     }
 
@@ -517,6 +662,14 @@ final class GuiStore: ObservableObject {
         selectedPromptByColumn = updatedSelection
         if let selectedExerciseColumnKey, updatedSelection[selectedExerciseColumnKey] == nil {
             self.selectedExerciseColumnKey = nil
+        }
+    }
+
+    private func syncAutopilotQueueWithOverview() {
+        let validKeys = Set(overview?.exercises.map(\.columnKey) ?? [])
+        autopilotQueueColumnKeys.removeAll { !validKeys.contains($0) }
+        if let draggedAutopilotColumnKey, !validKeys.contains(draggedAutopilotColumnKey) {
+            self.draggedAutopilotColumnKey = nil
         }
     }
 

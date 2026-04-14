@@ -236,8 +236,11 @@ def test_gui_prompt_routes_expose_prompt_library(client, monkeypatch) -> None:
             return [
                 PromptTemplate(
                     prompt_id="default-2p",
-                    title="2p Lauseet [SWE -> FIN]",
+                    title="2p Lauseet",
                     body="Prompt body",
+                    model_provider="vertex_ai",
+                    model_name="gemini-3.1-pro-preview",
+                    reasoning_level="medium",
                     built_in=True,
                 )
             ]
@@ -247,15 +250,39 @@ def test_gui_prompt_routes_expose_prompt_library(client, monkeypatch) -> None:
                 prompt_id="custom-new",
                 title="Uusi kriteeri",
                 body="",
+                model_provider="vertex_ai",
+                model_name="gemini-3.1-pro-preview",
+                reasoning_level="medium",
                 built_in=False,
             )
 
-        def save_prompt(self, *, title: str, body: str, prompt_id: str | None = None) -> PromptTemplate:
-            saved_payload.update({"prompt_id": prompt_id, "title": title, "body": body})
+        def save_prompt(
+            self,
+            *,
+            title: str,
+            body: str,
+            model_provider: str,
+            model_name: str,
+            reasoning_level: str,
+            prompt_id: str | None = None,
+        ) -> PromptTemplate:
+            saved_payload.update(
+                {
+                    "prompt_id": prompt_id,
+                    "title": title,
+                    "body": body,
+                    "model_provider": model_provider,
+                    "model_name": model_name,
+                    "reasoning_level": reasoning_level,
+                }
+            )
             return PromptTemplate(
                 prompt_id=prompt_id or "custom-saved",
                 title=title,
                 body=body,
+                model_provider=model_provider,
+                model_name=model_name,
+                reasoning_level=reasoning_level,
                 built_in=False,
             )
 
@@ -271,8 +298,11 @@ def test_gui_prompt_routes_expose_prompt_library(client, monkeypatch) -> None:
 
     prompt_response = client.get("/api/gui/prompts")
     prompt_response.raise_for_status()
-    assert prompt_response.json()[0]["title"] == "2p Lauseet [SWE -> FIN]"
+    assert prompt_response.json()[0]["title"] == "2p Lauseet"
     assert prompt_response.json()[0]["built_in"] is True
+    assert prompt_response.json()[0]["model_provider"] == "vertex_ai"
+    assert prompt_response.json()[0]["model_name"] == "gemini-3.1-pro-preview"
+    assert prompt_response.json()[0]["reasoning_level"] == "medium"
 
     new_prompt_response = client.post("/api/gui/prompts/new")
     new_prompt_response.raise_for_status()
@@ -284,19 +314,27 @@ def test_gui_prompt_routes_expose_prompt_library(client, monkeypatch) -> None:
             "prompt_id": "custom-1",
             "title": "Oma kriteeri",
             "body": "Arvioi vastaus konservatiivisesti.",
+            "model_provider": "vertex_ai",
+            "model_name": "gemini-2.5-flash-lite",
+            "reasoning_level": "low",
         },
     )
     save_response.raise_for_status()
     assert save_response.json()["title"] == "Oma kriteeri"
+    assert save_response.json()["model_name"] == "gemini-2.5-flash-lite"
     assert saved_payload == {
         "prompt_id": "custom-1",
         "title": "Oma kriteeri",
         "body": "Arvioi vastaus konservatiivisesti.",
+        "model_provider": "vertex_ai",
+        "model_name": "gemini-2.5-flash-lite",
+        "reasoning_level": "low",
     }
 
 
 def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch) -> None:
-    grade_calls: list[tuple[str, str, str | None, str | None, int]] = []
+    grade_calls: list[tuple[str, str, str | None, str | None, str | None, str | None, str | None, int]] = []
+    autopilot_calls: list[list[dict[str, object | None]]] = []
     shutdown_calls = {"count": 0}
     stop_grading_calls = {"count": 0}
 
@@ -355,9 +393,14 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
             instructions: str,
             prompt_id: str | None = None,
             prompt_title: str | None = None,
+            model_provider: str | None = None,
+            model_name: str | None = None,
+            reasoning_level: str | None = None,
             max_steps: int = 260,
         ) -> tuple[ExamSessionGradingTaskResult, SanomaOverviewState]:
-            grade_calls.append((column_key, instructions, prompt_id, prompt_title, max_steps))
+            grade_calls.append(
+                (column_key, instructions, prompt_id, prompt_title, model_provider, model_name, reasoning_level, max_steps)
+            )
             return (
                 ExamSessionGradingTaskResult(
                     job_id="job-1",
@@ -368,6 +411,40 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
                     report_path="artifacts/browser/job-1-grading-report.txt",
                 ),
                 overview_after,
+            )
+
+        def grade_exercise_queue(self, *, items):
+            autopilot_calls.append(
+                [
+                    {
+                        "column_key": item.column_key,
+                        "instructions": item.instructions,
+                        "prompt_id": item.prompt_id,
+                        "prompt_title": item.prompt_title,
+                        "model_provider": item.model_provider,
+                        "model_name": item.model_name,
+                        "reasoning_level": item.reasoning_level,
+                        "max_steps": item.max_steps,
+                    }
+                    for item in items
+                ]
+            )
+            return (
+                [
+                    (
+                        items[0],
+                        ExamSessionGradingTaskResult(
+                            job_id="job-auto-1",
+                            status="completed",
+                            summary="Autopilot arvioi tehtävän onnistuneesti.",
+                            current_exercise_label="Tehtävä 4",
+                            current_student_name="Veeti Räikkönen",
+                            report_path="artifacts/browser/job-auto-1-grading-report.txt",
+                        ),
+                    )
+                ],
+                overview_after,
+                "Autopilot processed 1 queued exercise(s).",
             )
 
         def request_stop_grading(self) -> None:
@@ -392,7 +469,7 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
                     "filled_point_fields": 21,
                     "report_path": "artifacts/browser/job-1-grading-report.txt",
                     "prompt_id": "default-2p",
-                    "prompt_title": "2p Lauseet [SWE -> FIN]",
+                    "prompt_title": "2p Lauseet",
                     "entries": [
                         {
                             "student_name": "Veeti Räikkönen",
@@ -414,6 +491,7 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
                             "submitted_prompt_text": "Teacher grading instructions:\\nPrompt body",
                             "model_provider": "vertex_ai",
                             "model_name": "gemini-3.1-pro-preview",
+                            "reasoning_level": "medium",
                             "model_response_text": "Grade: 1 / 2 points",
                             "used_heuristic_fallback": False,
                             "exercise_url": "https://arvi.sanomapro.fi/demo",
@@ -450,22 +528,72 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
             "column_key": "text-4-4",
             "instructions": "Käytä valittua kirjastokriteeriä.",
             "prompt_id": "default-2p",
-            "prompt_title": "2p Lauseet [SWE -> FIN]",
+            "prompt_title": "2p Lauseet",
+            "model_provider": "vertex_ai",
+            "model_name": "gemini-3.1-pro-preview",
+            "reasoning_level": "medium",
             "max_steps": 300,
         },
     )
     grade_response.raise_for_status()
     assert grade_response.json()["result"]["summary"] == "Tehtävä arvioitiin onnistuneesti."
     assert grade_response.json()["exercises"] == []
-    assert grade_calls == [("text-4-4", "Käytä valittua kirjastokriteeriä.", "default-2p", "2p Lauseet [SWE -> FIN]", 300)]
+    assert grade_calls == [
+        (
+            "text-4-4",
+            "Käytä valittua kirjastokriteeriä.",
+            "default-2p",
+            "2p Lauseet",
+            "vertex_ai",
+            "gemini-3.1-pro-preview",
+            "medium",
+            300,
+        )
+    ]
+
+    autopilot_response = client.post(
+        "/api/gui/autopilot/run",
+        json={
+            "items": [
+                {
+                    "column_key": "text-4-4",
+                    "instructions": "Käytä valittua kirjastokriteeriä.",
+                    "prompt_id": "default-2p",
+                    "prompt_title": "2p Lauseet",
+                    "model_provider": "vertex_ai",
+                    "model_name": "gemini-3.1-pro-preview",
+                    "reasoning_level": "medium",
+                    "max_steps": 300,
+                }
+            ]
+        },
+    )
+    autopilot_response.raise_for_status()
+    assert autopilot_response.json()["summary"] == "Autopilot processed 1 queued exercise(s)."
+    assert autopilot_response.json()["items"][0]["result"]["summary"] == "Autopilot arvioi tehtävän onnistuneesti."
+    assert autopilot_calls == [
+        [
+            {
+                "column_key": "text-4-4",
+                "instructions": "Käytä valittua kirjastokriteeriä.",
+                "prompt_id": "default-2p",
+                "prompt_title": "2p Lauseet",
+                "model_provider": "vertex_ai",
+                "model_name": "gemini-3.1-pro-preview",
+                "reasoning_level": "medium",
+                "max_steps": 300,
+            }
+        ]
+    ]
 
     statistics_response = client.get("/api/gui/statistics")
     statistics_response.raise_for_status()
     statistics_payload = statistics_response.json()
     assert statistics_payload["runs"][0]["category_name"] == "Text 4"
-    assert statistics_payload["runs"][0]["prompt_title"] == "2p Lauseet [SWE -> FIN]"
+    assert statistics_payload["runs"][0]["prompt_title"] == "2p Lauseet"
     assert statistics_payload["runs"][0]["entries"][0]["score_possible"] == 2.0
     assert statistics_payload["runs"][0]["entries"][0]["model_name"] == "gemini-3.1-pro-preview"
+    assert statistics_payload["runs"][0]["entries"][0]["reasoning_level"] == "medium"
     assert statistics_payload["runs"][0]["entries"][0]["submitted_prompt_text"].startswith("Teacher grading instructions:")
 
     stop_grading_response = client.post("/api/gui/exercises/stop")

@@ -10,13 +10,44 @@ actor GuiAPIClient {
 
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            if let date = Self.parseISO8601Date(value) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported ISO8601 date: \(value)"
+            )
+        }
         self.decoder = decoder
 
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(Self.encodeISO8601Date(date))
+        }
         self.encoder = encoder
+    }
+
+    private static func parseISO8601Date(_ value: String) -> Date? {
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: value) {
+            return date
+        }
+
+        let basicFormatter = ISO8601DateFormatter()
+        basicFormatter.formatOptions = [.withInternetDateTime]
+        return basicFormatter.date(from: value)
+    }
+
+    private static func encodeISO8601Date(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
     }
 
     static func shutdownSynchronously(baseURL: URL? = nil, timeout: TimeInterval = 2.0) {
@@ -75,6 +106,10 @@ actor GuiAPIClient {
 
     func gradeExercise(_ request: GuiGradeExerciseRequest) async throws -> GuiGradeExerciseResponse {
         try await post("gui/exercises/grade", body: request)
+    }
+
+    func runAutopilot(_ request: GuiAutopilotRunRequest) async throws -> GuiAutopilotRunResponse {
+        try await post("gui/autopilot/run", body: request)
     }
 
     func stopGrading() async throws {

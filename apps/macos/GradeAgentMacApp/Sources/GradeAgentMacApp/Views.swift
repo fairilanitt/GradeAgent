@@ -555,7 +555,11 @@ struct PromptWorkspaceView: View {
             return !store.draftPromptTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !store.draftPromptBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        return selectedPrompt.title != store.draftPromptTitle || selectedPrompt.body != store.draftPromptBody
+        return selectedPrompt.title != store.draftPromptTitle
+            || selectedPrompt.body != store.draftPromptBody
+            || selectedPrompt.modelProvider != store.draftPromptModelProvider
+            || selectedPrompt.modelName != store.draftPromptModelName
+            || selectedPrompt.reasoningLevel != store.draftPromptReasoningLevel
     }
 
     private var promptLineCount: Int {
@@ -581,6 +585,29 @@ struct PromptWorkspaceView: View {
             "(FIN ANSWER)",
         ]
         .filter { store.draftPromptBody.localizedCaseInsensitiveContains($0) }
+    }
+
+    private var availableModelOptions: [PromptModelOption] {
+        var options = PromptEditorOptions.modelOptions
+        let currentID = "\(store.draftPromptModelProvider)|\(store.draftPromptModelName)"
+        if !options.contains(where: { $0.id == currentID }),
+           !store.draftPromptModelProvider.isEmpty,
+           !store.draftPromptModelName.isEmpty {
+            options.insert(
+                PromptModelOption(
+                    provider: store.draftPromptModelProvider,
+                    modelName: store.draftPromptModelName,
+                    title: store.draftPromptModelName,
+                    subtitle: store.draftPromptModelProvider
+                ),
+                at: 0
+            )
+        }
+        return options
+    }
+
+    private var selectedModelOptionID: String {
+        "\(store.draftPromptModelProvider)|\(store.draftPromptModelName)"
     }
 
     var body: some View {
@@ -660,6 +687,8 @@ struct PromptWorkspaceView: View {
                             )
                     }
 
+                    promptConfigurationSection
+
                     promptEditorCanvas
                         .frame(maxWidth: .infinity, minHeight: 620, alignment: .top)
 
@@ -696,6 +725,83 @@ struct PromptWorkspaceView: View {
             .padding(contentInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+
+    private var promptConfigurationSection: some View {
+        AdaptiveAxisStack(horizontal: true, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Arviointimalli")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.76))
+
+                Picker("Arviointimalli", selection: selectedModelBinding) {
+                    ForEach(availableModelOptions) { option in
+                        Text(option.displayName).tag(option.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .tint(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color.black.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+                if let option = availableModelOptions.first(where: { $0.id == selectedModelOptionID }) {
+                    Text(option.displayName)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Reasoning-taso")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.76))
+
+                Picker("Reasoning-taso", selection: $store.draftPromptReasoningLevel) {
+                    ForEach(PromptEditorOptions.reasoningOptions) { option in
+                        Text("\(option.title) - \(option.subtitle)").tag(option.value)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .tint(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color.black.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+                if let option = PromptEditorOptions.reasoningOptions.first(where: { $0.value == store.draftPromptReasoningLevel }) {
+                    Text(option.subtitle)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var selectedModelBinding: Binding<String> {
+        Binding(
+            get: { selectedModelOptionID },
+            set: { newValue in
+                guard let option = availableModelOptions.first(where: { $0.id == newValue }) else { return }
+                store.draftPromptModelProvider = option.provider
+                store.draftPromptModelName = option.modelName
+            }
+        )
     }
 
     private var promptEditorCanvas: some View {

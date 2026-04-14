@@ -71,7 +71,7 @@ struct StatisticsPageView: View {
                 Text("Tilastot")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                Text("Tutki arviointiajoja, pistetasoja ja Sanoman DOM:sta kerättyjä tehtäväkohtaisia tietoja.")
+                Text("Kaikki arviodut tehtävät ja oppilaiden vastaukset")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.76))
             }
@@ -483,6 +483,14 @@ struct LogsPageView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
+                    if let statisticsErrorMessage = store.statisticsErrorMessage {
+                        StatisticsCard(title: "Lokien lataus", subtitle: "Lokitietojen hakeminen ei onnistunut juuri nyt.") {
+                            Text(statisticsErrorMessage)
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.82))
+                                .textSelection(.enabled)
+                        }
+                    }
                     metrics
 
                     if filteredLogs.isEmpty {
@@ -871,16 +879,22 @@ private struct StatisticsLogRecord: Identifiable {
     var modelDisplay: String {
         let provider = entry.modelProvider?.nilIfBlank
         let name = entry.modelName?.nilIfBlank
+        let reasoning = entry.reasoningLevel?.nilIfBlank
+        let base: String
         switch (provider, name) {
         case (.some(let provider), .some(let name)):
-            return "\(provider) / \(name)"
+            base = "\(provider) / \(name)"
         case (.none, .some(let name)):
-            return name
+            base = name
         case (.some(let provider), .none):
-            return provider
+            base = provider
         case (.none, .none):
-            return "Tuntematon malli"
+            base = "Tuntematon malli"
         }
+        if let reasoning {
+            return "\(base) / reasoning \(reasoning)"
+        }
+        return base
     }
 
     var pointsText: String {

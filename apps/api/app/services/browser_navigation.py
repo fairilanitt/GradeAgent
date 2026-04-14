@@ -39,6 +39,7 @@ from app.schemas.api import (
     QueueGradingTaskResult,
 )
 from app.services.llm_provider import (
+    DEFAULT_VERTEX_AI_GRADING_MODEL,
     ProviderConfigurationError,
     browser_model_supports_vision,
     build_explicit_grading_chat_model,
@@ -46,6 +47,8 @@ from app.services.llm_provider import (
     extract_json_object,
     flatten_llm_content,
     normalize_provider,
+    normalize_reasoning_level,
+    normalize_vertex_ai_grading_selection,
     resolve_browser_model_name,
 )
 from app.services.mlx_vlm_visual import MLXVLMUnavailableError, MLXVLMVisualClient
@@ -164,6 +167,7 @@ class SanomaScoreDecisionAudit(BaseModel):
     submitted_prompt_text: str = ""
     model_provider: str | None = None
     model_name: str | None = None
+    reasoning_level: str | None = None
     model_response_text: str = ""
     repair_prompt_text: str = ""
     repair_response_text: str = ""
@@ -199,6 +203,7 @@ class SanomaGradingReportEntry(BaseModel):
     submitted_prompt_text: str = ""
     model_provider: str | None = None
     model_name: str | None = None
+    reasoning_level: str | None = None
     model_response_text: str = ""
     repair_prompt_text: str = ""
     repair_response_text: str = ""
@@ -402,6 +407,36 @@ class BrowserNavigationService:
             if self._cdp_http_url_is_reachable(cdp_url):
                 return cdp_url
         return None
+
+    def _http_cdp_page_targets(self, cdp_url: str) -> list[dict[str, str]]:
+        try:
+            response = httpx.get(
+                f"{cdp_url.rstrip('/')}/json/list",
+                timeout=1.5,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            return []
+
+        if not isinstance(payload, list):
+            return []
+
+        page_targets: list[dict[str, str]] = []
+        for target in payload:
+            if not isinstance(target, dict):
+                continue
+            target_type = str(target.get("type", "") or "").lower()
+            if target_type not in {"page", "tab"}:
+                continue
+            page_targets.append(
+                {
+                    "target_id": str(target.get("id", "") or target.get("targetId", "") or ""),
+                    "title": str(target.get("title", "") or ""),
+                    "url": str(target.get("url", "") or ""),
+                }
+            )
+        return page_targets
 
     def _persistent_profile_root(self) -> Path:
         configured_dir = self.settings.browser_persistent_profile_dir
@@ -1018,6 +1053,66 @@ Be conservative. If uncertain, do not choose exam_grading.
 
         return False
 
+    async def _wait_for_page_ready_passively(
+        self,
+        page,
+        *,
+        current_url: str | None = None,
+        timeout_seconds: float = 12.0,
+    ) -> bool:
+        deadline = time.monotonic() + timeout_seconds
+        last_known_url = (current_url or "").strip() or None
+        while time.monotonic() < deadline:
+            try:
+                resolved_url = await page.get_url()
+                if resolved_url:
+                    last_known_url = resolved_url
+            except Exception:
+                pass
+
+            try:
+                metrics = await page.evaluate(
+                    """
+                    () => {
+                      const body = document.body;
+                      const bodyText = body?.innerText?.trim() ?? '';
+                      const root = document.querySelector('[ui-view], .mb-view');
+                      const interactiveCount = document.querySelectorAll(
+                        'input, textarea, select, button, a, [role="button"]'
+                      ).length;
+                      return {
+                        readyState: document.readyState,
+                        textLength: bodyText.length,
+                        uiViewChildren: root ? root.children.length : 0,
+                        interactiveCount,
+                      };
+                    }
+                    """
+                )
+            except Exception:
+                metrics = None
+
+            if isinstance(metrics, dict):
+                ready_state = str(metrics.get("readyState", "") or "").lower()
+                text_length = int(metrics.get("textLength", 0) or 0)
+                ui_view_children = int(metrics.get("uiViewChildren", 0) or 0)
+                interactive_count = int(metrics.get("interactiveCount", 0) or 0)
+                if (
+                    ready_state in {"interactive", "complete"}
+                    and (
+                        text_length >= 40
+                        or ui_view_children > 0
+                        or interactive_count >= 3
+                        or not last_known_url
+                        or "arvi.sanomapro.fi" not in last_known_url
+                    )
+                ):
+                    return True
+
+            await asyncio.sleep(0.5)
+
+        return False
+
     async def _collect_tab_candidates(self, browser_session: BrowserSession) -> list[dict[str, str]]:
         seen: set[tuple[str, str]] = set()
         candidates: list[dict[str, str]] = []
@@ -1073,6 +1168,21 @@ Be conservative. If uncertain, do not choose exam_grading.
                     )
             except Exception:
                 pass
+
+        discovered_cdp_url = self._discover_running_gradeagent_cdp_url(self._persistent_profile_root())
+        if discovered_cdp_url:
+            for target in self._http_cdp_page_targets(discovered_cdp_url):
+                self._sync_session_target_metadata(
+                    browser_session,
+                    target_id=target.get("target_id", ""),
+                    url=target.get("url", ""),
+                    title=target.get("title", ""),
+                )
+                add_candidate(
+                    target.get("target_id", ""),
+                    target.get("title", ""),
+                    target.get("url", ""),
+                )
 
         current_url = ""
         current_title = ""
@@ -1733,6 +1843,7 @@ Be conservative. If uncertain, do not choose exam_grading.
             submitted_prompt_text=audit.submitted_prompt_text if audit is not None else "",
             model_provider=audit.model_provider if audit is not None else None,
             model_name=audit.model_name if audit is not None else None,
+            reasoning_level=audit.reasoning_level if audit is not None else None,
             model_response_text=audit.model_response_text if audit is not None else "",
             repair_prompt_text=audit.repair_prompt_text if audit is not None else "",
             repair_response_text=audit.repair_response_text if audit is not None else "",
@@ -1808,7 +1919,18 @@ Be conservative. If uncertain, do not choose exam_grading.
                         f"Answer: {entry.answer_text or '-'}",
                         f"Model Answer: {entry.model_answer_text or '-'}",
                         f"Points: {entry.points_text or '-'}",
-                        f"Model used: {((entry.model_provider or '-') + ' / ' + (entry.model_name or '-')).strip()}",
+                        (
+                            "Model used: "
+                            + " / ".join(
+                                part
+                                for part in (
+                                    entry.model_provider or "-",
+                                    entry.model_name or "-",
+                                    f"reasoning {entry.reasoning_level}" if entry.reasoning_level else None,
+                                )
+                                if part
+                            )
+                        ),
                         "Points basis:",
                     ]
                 )
@@ -1869,73 +1991,6 @@ Be conservative. If uncertain, do not choose exam_grading.
             encoding="utf-8",
         )
         return report_path
-
-    def _sanomapro_single_score_max(self, exercise_state: SanomaExerciseState) -> float | None:
-        if len(exercise_state.score_fields) != 1:
-            return None
-        return round(exercise_state.score_fields[0].max_score, 2)
-
-    def _sanomapro_detect_scoring_profile(self, exercise_state: SanomaExerciseState) -> str:
-        single_score_max = self._sanomapro_single_score_max(exercise_state)
-        if single_score_max is None:
-            return "multi_field_or_generic"
-        if abs(single_score_max - 2.0) <= 0.05:
-            return "single_score_max_2"
-        if abs(single_score_max - 3.0) <= 0.05:
-            return "single_score_max_3"
-        return "single_score_generic"
-
-    def _sanomapro_scoring_policy_text(self, exercise_state: SanomaExerciseState) -> str:
-        profile = self._sanomapro_detect_scoring_profile(exercise_state)
-        if profile == "single_score_max_2":
-            return (
-                "Detected from DOM: one visible overall score field with max 2 points.\n"
-                "Apply this scoring principle:\n"
-                "- Compare Oppilaan vastaus directly to Mallivastaus, but prioritize meaning over word-for-word matching.\n"
-                "- If the student's sentence means the same thing as Mallivastaus, treat it as correct even if the wording is different.\n"
-                "- Example: 'Onko mielestasi' and 'Oletko sita mielta' can be equally correct when they preserve the same meaning.\n"
-                "- If the answer is around half right, give 1/2.\n"
-                "- If there is only a small mistake such as one wrong letter or a small grammatical detail, give 1.5/2.\n"
-                "- Do not give 1/2 just because a few keywords overlap.\n"
-                "- If multiple words are incorrect, there are several typos, or the phrase structure/order is wrong, be strict: this is usually 0/2 unless about half of the meaning is still clearly correct.\n"
-                "- If neither rule fits, give 0/2.\n"
-                "- Give 2/2 only when the answer matches the model answer well enough to be fully correct."
-            )
-        if profile == "single_score_max_3":
-            return (
-                "Detected from DOM: one visible overall score field with max 3 points.\n"
-                "Apply this scoring principle:\n"
-                "- Compare Oppilaan vastaus directly to Mallivastaus, but prioritize meaning over word-for-word matching.\n"
-                "- If the student's sentence means the same thing as Mallivastaus, treat it as correct even if the wording is different.\n"
-                "- Example: 'Onko mielestasi' and 'Oletko sita mielta' can be equally correct when they preserve the same meaning.\n"
-                "- If one whole word is wrong, give 2/3.\n"
-                "- If only one letter or a small grammatical detail inside a word is wrong, give 2.5/3.\n"
-                "- If there are multiple details wrong but the main message or spirit still matches Mallivastaus, give 1/3.\n"
-                "- Do not be generous when several words are wrong, there are multiple typos, or the phrase structure/order is clearly broken.\n"
-                "- When several independent errors accumulate, prefer 1/3 or 0/3 rather than 2/3.\n"
-                "- If none of these rules fit, give 0/3.\n"
-                "- Give 3/3 only when the answer matches the model answer well enough to be fully correct."
-            )
-        if profile == "single_score_generic":
-            max_score = self._sanomapro_single_score_max(exercise_state)
-            return (
-                "Detected from DOM: one visible overall score field with a non-standard max score.\n"
-                f"- Compare Oppilaan vastaus directly to Mallivastaus and assign one score between 0 and {self._format_score_value(max_score or 0)}.\n"
-                "- Prioritize semantic equivalence over exact wording when the student's meaning is clearly the same.\n"
-                "- Be strict when several wording, typo, or phrase-structure errors accumulate.\n"
-                "- Use the visible exercise content only.\n"
-                "- Keep the score proportional to how closely the submission matches the model answer."
-            )
-        total_max = round(sum(field.max_score for field in exercise_state.score_fields), 2)
-        return (
-            "Detected from DOM: multiple visible score fields or a multi-part scoring layout.\n"
-            f"- There are {len(exercise_state.score_fields)} visible score fields with a combined max of {self._format_score_value(total_max)} points.\n"
-            "- Compare Oppilaan vastaus to Mallivastaus.\n"
-            "- Prioritize semantic equivalence over exact wording when the student's meaning is clearly the same.\n"
-            "- Be strict when several wording, typo, or phrase-structure errors accumulate.\n"
-            "- Score each visible field separately in DOM order.\n"
-            "- Do not invent extra fields and do not exceed the visible max score for any field."
-        )
 
     def _sanomapro_source_phrase_text(self, exercise_state: SanomaExerciseState) -> str:
         target_text = (exercise_state.target_text or "").strip()
@@ -2081,7 +2136,9 @@ Be conservative. If uncertain, do not choose exam_grading.
         mode: Literal["running", "completed", "failed", "needs_review"] = "running",
         headline: str,
         detail: str,
+        stats: dict[str, str | int | float | None] | None = None,
         meta: dict[str, str | int | float | None] | None = None,
+        note: str | None = None,
         record_event: bool = True,
     ) -> None:
         payload = {
@@ -2094,11 +2151,17 @@ Be conservative. If uncertain, do not choose exam_grading.
             }.get(mode, "Live"),
             "headline": headline.strip(),
             "detail": detail.strip(),
+            "stats": [
+                [str(label), str(value)]
+                for label, value in (stats or {}).items()
+                if value not in {None, ""}
+            ],
             "meta": [
                 [str(label), str(value)]
                 for label, value in (meta or {}).items()
                 if value not in {None, ""}
             ],
+            "note": (note or "").strip(),
             "recordEvent": record_event,
             "timestamp": time.strftime("%H:%M:%S"),
         }
@@ -2178,6 +2241,43 @@ Be conservative. If uncertain, do not choose exam_grading.
                         opacity: 0.94;
                         white-space: pre-wrap;
                       }}
+                      #${{overlayId}} .ga-stats {{
+                        display: grid;
+                        grid-template-columns: repeat(3, minmax(0, 1fr));
+                        gap: 8px;
+                        margin-top: 12px;
+                      }}
+                      #${{overlayId}} .ga-stat {{
+                        background: rgba(255, 255, 255, 0.12);
+                        border: 1px solid rgba(255, 255, 255, 0.10);
+                        border-radius: 14px;
+                        padding: 9px 10px;
+                      }}
+                      #${{overlayId}} .ga-stat-label {{
+                        display: block;
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: 0.06em;
+                        text-transform: uppercase;
+                        opacity: 0.7;
+                        margin-bottom: 3px;
+                      }}
+                      #${{overlayId}} .ga-stat-value {{
+                        display: block;
+                        font-size: 17px;
+                        font-weight: 700;
+                        line-height: 1.15;
+                      }}
+                      #${{overlayId}} .ga-note {{
+                        margin-top: 12px;
+                        padding: 9px 11px;
+                        border-radius: 13px;
+                        background: rgba(255, 255, 255, 0.09);
+                        border: 1px solid rgba(255, 255, 255, 0.09);
+                        font-size: 12px;
+                        line-height: 1.45;
+                        color: rgba(248, 250, 252, 0.9);
+                      }}
                       #${{overlayId}} .ga-meta {{
                         display: grid;
                         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2205,6 +2305,16 @@ Be conservative. If uncertain, do not choose exam_grading.
                         font-weight: 600;
                         word-break: break-word;
                       }}
+                      #${{overlayId}} .ga-meta-item[data-size="wide"] {{
+                        grid-column: 1 / -1;
+                        background: rgba(255, 255, 255, 0.06);
+                      }}
+                      @media (max-width: 560px) {{
+                        #${{overlayId}} .ga-stats,
+                        #${{overlayId}} .ga-meta {{
+                          grid-template-columns: minmax(0, 1fr);
+                        }}
+                      }}
                     `;
                     (document.head || document.documentElement).appendChild(style);
                   }}
@@ -2222,6 +2332,8 @@ Be conservative. If uncertain, do not choose exam_grading.
                         </div>
                         <div class="ga-headline"></div>
                         <div class="ga-detail"></div>
+                        <div class="ga-stats"></div>
+                        <div class="ga-note" hidden></div>
                         <div class="ga-meta"></div>
                       </div>
                     `;
@@ -2235,11 +2347,38 @@ Be conservative. If uncertain, do not choose exam_grading.
                   root.querySelector('.ga-headline').textContent = payload.headline;
                   root.querySelector('.ga-detail').textContent = payload.detail;
 
+                  const statsRoot = root.querySelector('.ga-stats');
+                  statsRoot.replaceChildren();
+                  for (const [label, value] of payload.stats || []) {{
+                    const item = document.createElement('div');
+                    item.className = 'ga-stat';
+                    const labelEl = document.createElement('span');
+                    labelEl.className = 'ga-stat-label';
+                    labelEl.textContent = label;
+                    const valueEl = document.createElement('span');
+                    valueEl.className = 'ga-stat-value';
+                    valueEl.textContent = value;
+                    item.append(labelEl, valueEl);
+                    statsRoot.appendChild(item);
+                  }}
+
+                  const noteEl = root.querySelector('.ga-note');
+                  if (payload.note) {{
+                    noteEl.hidden = false;
+                    noteEl.textContent = payload.note;
+                  }} else {{
+                    noteEl.hidden = true;
+                    noteEl.textContent = '';
+                  }}
+
                   const metaRoot = root.querySelector('.ga-meta');
                   metaRoot.replaceChildren();
                   for (const [label, value] of payload.meta || []) {{
                     const item = document.createElement('div');
                     item.className = 'ga-meta-item';
+                    if (String(value).length > 72) {{
+                      item.dataset.size = 'wide';
+                    }}
                     const labelEl = document.createElement('span');
                     labelEl.className = 'ga-meta-label';
                     labelEl.textContent = label;
@@ -2281,6 +2420,20 @@ Be conservative. If uncertain, do not choose exam_grading.
             decision.should_skip = True
             decision.skip_reason = "missing_score_output"
         return decision
+
+    def _build_sanomapro_needs_review_decision(
+        self,
+        *,
+        summary: str,
+        skip_reason: str,
+    ) -> SanomaScoreDecision:
+        return SanomaScoreDecision(
+            summary=summary.strip(),
+            confidence=0,
+            should_skip=True,
+            skip_reason=skip_reason,
+            scores=[],
+        )
 
     async def _build_sanomapro_heuristic_score_decision(
         self,
@@ -2585,16 +2738,11 @@ JSON schema instructions:
         return await self._extract_sanomapro_overview_state(page)
 
     async def inspect_sanomapro_overview_passively(self, browser_session: BrowserSession) -> SanomaOverviewState:
-        current_url = None
-        try:
-            current_url = await browser_session.get_current_page_url()
-        except Exception:
-            current_url = None
-
         page = await browser_session.get_current_page()
         if page is None:
             raise RuntimeError("The managed browser did not expose an active overview page.")
 
+        current_url = None
         if not current_url:
             try:
                 current_url = await page.get_url()
@@ -2602,9 +2750,30 @@ JSON schema instructions:
                 current_url = None
 
         if not current_url or not self._is_sanomapro_review_overview_url(current_url):
-            raise RuntimeError("Open the Sanoma Pro review overview page before refreshing exercises.")
+            # Passive auto-detection should not click within pages, but it may need to recover
+            # from the browser session still pointing at the original login/start tab even
+            # after the user has opened the real review overview elsewhere in the same window.
+            if not current_url or not self._is_exam_grading_page(current_url):
+                candidates = await self._collect_tab_candidates(browser_session)
+                overview_candidates = [
+                    tab for tab in candidates if self._is_sanomapro_review_overview_url(tab.get("url"))
+                ]
+                if overview_candidates:
+                    indexed_candidates = list(enumerate(overview_candidates))
+                    selected_tab = max(
+                        indexed_candidates,
+                        key=lambda item: self._tab_selection_score(SimpleNamespace(**item[1]), item[0]),
+                    )[1]
+                    target_id = selected_tab.get("target_id", "")
+                    if target_id and target_id != "current-page":
+                        await self._ensure_target_known_to_session(browser_session, target_id)
+                        await self._switch_to_target(browser_session, target_id)
+                    current_url = selected_tab.get("url")
+                    page = await browser_session.get_current_page()
+            if not current_url or not self._is_sanomapro_review_overview_url(current_url):
+                raise RuntimeError("Open the Sanoma Pro review overview page before refreshing exercises.")
 
-        await self._wait_for_exam_page_ready(browser_session)
+        await self._wait_for_page_ready_passively(page, current_url=current_url)
         return await self._extract_sanomapro_overview_state(page)
 
     def _sanomapro_overview_column_by_key(
@@ -2926,10 +3095,20 @@ JSON schema instructions:
             exemplars=[],
         )
 
-        sanomapro_provider = normalize_provider(self.settings.sanomapro_exercise_grading_provider)
-        sanomapro_model = self.settings.sanomapro_exercise_grading_model.strip() or "gemini-3.1-pro-preview"
+        configured_provider = (
+            payload.grading_model_provider
+            or self.settings.sanomapro_exercise_grading_provider
+        )
+        configured_model_name = (
+            payload.grading_model_name
+            or self.settings.sanomapro_exercise_grading_model
+        )
+        sanomapro_provider, sanomapro_model = normalize_vertex_ai_grading_selection(
+            configured_provider,
+            configured_model_name.strip() or DEFAULT_VERTEX_AI_GRADING_MODEL,
+        )
+        sanomapro_reasoning_level = normalize_reasoning_level(payload.grading_reasoning_level)
         parser = PydanticOutputParser(pydantic_object=SanomaScoreDecision)
-        scoring_policy_text = self._sanomapro_scoring_policy_text(exercise_state)
         fields_text = "\n".join(
             f"- index {field.index}: max {field.max_score}, current value '{field.current_value}', label '{field.label or field.container_text}'"
             for field in exercise_state.score_fields
@@ -2943,40 +3122,18 @@ JSON schema instructions:
 Teacher grading instructions:
 {rendered_instructions}
 
-Assignment:
-{exercise_state.assignment_title}
-
-Student:
-{exercise_state.student_name or '-'} ({exercise_state.student_progress or '-'})
-
-Exercise:
-{self._sanomapro_compact_exercise_label(exercise_state)}
-
-Question text:
-{exercise_state.question_text}
-
-Mallivastaus:
-{exercise_state.model_answer_text or '-'}
-
-Student answer:
-{exercise_state.answer_text}
-
-Detected scoring profile from DOM:
-{self._sanomapro_detect_scoring_profile(exercise_state)}
-
-Detected scoring policy:
-{scoring_policy_text}
-
-Visible score fields in DOM order:
+Scoring UI constraints:
 {fields_text}
 
-Requirements:
+Response requirements:
 - Return one numeric score for each visible score field.
 - The `index` must match the DOM order from the list above.
 - Every `score` must be between 0 and that field's max score.
-- Treat meaning-equivalent phrasing as correct even when the wording differs.
-- Do not be generous when several independent errors accumulate across words, typos, or phrase structure.
-- The `summary` must briefly explain why those points were awarded compared to Mallivastaus.
+- Grade only according to the teacher grading instructions above.
+- Do not invent extra grading criteria or inferred scoring rules.
+- If the teacher grading instructions define specific allowed point values, use only those exact values.
+- Do not invent arbitrary decimals such as 0.98 unless the teacher grading instructions explicitly require them.
+- The `summary` must briefly explain why those points were awarded.
 - Every field `rationale` must explain why that specific score was chosen.
 - Use `should_skip=true` only if the page is unsafe or the answer cannot be graded from the visible content.
 - Keep rationales short and operator-safe.
@@ -2991,20 +3148,15 @@ JSON schema instructions:
             submitted_prompt_text=human_prompt_text,
             model_provider=sanomapro_provider,
             model_name=sanomapro_model,
+            reasoning_level=sanomapro_reasoning_level,
         )
-        if sanomapro_provider == "heuristic":
-            decision = await self._build_sanomapro_heuristic_score_decision(
-                score_request,
-                exercise_state,
-            )
-            self._store_last_sanomapro_score_audit(base_audit)
-            return decision
         try:
             model = build_explicit_grading_chat_model(
                 self.settings,
                 provider=sanomapro_provider,
                 model_name=sanomapro_model,
                 routing_tier="standard",
+                reasoning_level=sanomapro_reasoning_level,
             )
             response = await model.ainvoke(
                 [
@@ -3014,18 +3166,16 @@ JSON schema instructions:
             )
             text = flatten_llm_content(response.content)
         except Exception as exc:
-            decision = await self._build_sanomapro_heuristic_score_decision(
-                score_request,
-                exercise_state,
-                summary_prefix=(
-                    "Heuristic fallback applied after Sanoma exercise grading failed "
-                    f"with {sanomapro_provider}/{sanomapro_model}: {exc}."
+            decision = self._build_sanomapro_needs_review_decision(
+                summary=(
+                    "Managed grading could not produce a usable result with "
+                    f"{sanomapro_provider}/{sanomapro_model}. Review this answer manually."
                 ),
+                skip_reason="managed_model_failed",
             )
             self._store_last_sanomapro_score_audit(
                 base_audit.model_copy(
                     update={
-                        "used_heuristic_fallback": True,
                         "fallback_reason": (
                             "Managed grading request failed before a usable JSON response was produced: "
                             f"{exc}"
@@ -3064,13 +3214,12 @@ JSON schema instructions:
             )
             return repair_result.decision
 
-        decision = await self._build_sanomapro_heuristic_score_decision(
-            score_request,
-            exercise_state,
-            summary_prefix=(
-                "Heuristic fallback applied after "
-                f"{sanomapro_provider}/{sanomapro_model} returned a non-JSON grading draft."
+        decision = self._build_sanomapro_needs_review_decision(
+            summary=(
+                "Managed grading returned an invalid structured response with "
+                f"{sanomapro_provider}/{sanomapro_model}. Review this answer manually."
             ),
+            skip_reason="invalid_model_response",
         )
         self._store_last_sanomapro_score_audit(
             base_audit.model_copy(
@@ -3078,7 +3227,6 @@ JSON schema instructions:
                     "model_response_text": text,
                     "repair_prompt_text": repair_result.prompt_text,
                     "repair_response_text": repair_result.response_text,
-                    "used_heuristic_fallback": True,
                     "fallback_reason": (
                         "The managed grading model returned text that could not be normalized into the required JSON schema."
                     ),
@@ -3703,10 +3851,12 @@ JSON schema instructions:
                     else "Autonomous grading stopped"
                 ),
                 detail=summary,
-                meta={
+                stats={
                     "Processed": processed_answers,
                     "Skipped": skipped_answers,
                     "Fields typed": filled_point_fields,
+                },
+                meta={
                     "Ryhmä": (
                         last_report_entry.group_name
                         if last_report_entry and last_report_entry.group_name
@@ -3718,10 +3868,10 @@ JSON schema instructions:
                         if last_report_entry is not None
                         else last_exercise_label or "-"
                     ),
-                    "Oppilas": last_student_name or (last_report_entry.student_name if last_report_entry else "-"),
-                    "Edistyminen": last_report_entry.student_progress if last_report_entry else "-",
                     "Points": last_report_entry.points_text if last_report_entry else "-",
+                    "Report": Path(report_path).name if report_path else "-",
                 },
+                note="Browser stays open. Return to GradeAgent to choose the next task or inspect the saved report.",
             )
 
         steps.append(
@@ -4257,10 +4407,12 @@ JSON schema instructions:
                     else "Exercise grading stopped"
                 ),
                 detail=summary,
-                meta={
+                stats={
                     "Processed": processed_answers,
                     "Skipped": skipped_answers,
                     "Fields typed": filled_point_fields,
+                },
+                meta={
                     "Ryhmä": (
                         last_report_entry.group_name
                         if last_report_entry and last_report_entry.group_name
@@ -4272,10 +4424,10 @@ JSON schema instructions:
                         if last_report_entry is not None
                         else last_exercise_label or selected_column_label or "-"
                     ),
-                    "Oppilas": last_student_name or (last_report_entry.student_name if last_report_entry else "-"),
-                    "Edistyminen": last_report_entry.student_progress if last_report_entry else "-",
                     "Points": last_report_entry.points_text if last_report_entry else "-",
+                    "Report": Path(report_path).name if report_path else "-",
                 },
+                note="Browser stays open. Choose the next exercise in GradeAgent when you want to continue.",
             )
 
         steps.append(

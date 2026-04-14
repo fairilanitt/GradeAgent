@@ -6,21 +6,34 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from app.services.llm_provider import (
+    DEFAULT_VERTEX_AI_GRADING_MODEL,
+    ProviderConfigurationError,
+    normalize_reasoning_level,
+    normalize_vertex_ai_grading_selection,
+)
+
 
 class PromptTemplate(BaseModel):
     prompt_id: str
     title: str
     body: str
+    model_provider: str = "vertex_ai"
+    model_name: str = DEFAULT_VERTEX_AI_GRADING_MODEL
+    reasoning_level: str = "medium"
     built_in: bool = False
 
 
 DEFAULT_PROMPT_TEMPLATES: tuple[PromptTemplate, ...] = (
     PromptTemplate(
         prompt_id="default-2p-lauseet-swe-fin",
-        title="2p Lauseet [SWE -> FIN]",
+        title="2p Lauseet",
+        model_provider="vertex_ai",
+        model_name=DEFAULT_VERTEX_AI_GRADING_MODEL,
+        reasoning_level="medium",
         built_in=True,
         body="""
-The student was tasked with translating the swedish phrase "(TARGET)" to finnish. They submitted "(ANSWER)". Proceed to grade this from a scale of:
+The student was tasked with "(OBJECTIVE)". The target phrase was "(TARGET)". They submitted "(ANSWER)". Proceed to grade this from a scale of:
 
 2/2 points:
 
@@ -41,6 +54,36 @@ The answer is barely understandable and has grammatical mistakes. The message co
 0 points:
 
 The answer is not understandable, and not legible
+""".strip(),
+    ),
+    PromptTemplate(
+        prompt_id="default-2p-kuullunymmartaminen-swe-fin",
+        title="2p Kuullun ymmärtäminen [SWE audio -> FIN vastaus]",
+        model_provider="vertex_ai",
+        model_name=DEFAULT_VERTEX_AI_GRADING_MODEL,
+        reasoning_level="medium",
+        built_in=True,
+        body="""
+The student listened to a swedish audio clip. They were asked the following question in finnish: "(QUESTION)". 
+The expected correct information (model answer) is: "(MODELANSWER)". 
+The student submitted the following answer in finnish: "(ANSWER)". 
+
+Because this is a listening comprehension exercise, evaluate the answer strictly based on information retrieval and understanding, NOT finnish grammar. Proceed to grade this from a scale of:
+
+2/2 points:
+The answer is completely correct. It contains all the key facts required by the model answer and directly answers the question. The student clearly understood the relevant part of the swedish audio.
+
+1.5/2 points:
+The answer captures the core message well but is slightly imprecise, or it misses a very minor detail present in the model answer. It still demonstrates a strong understanding of the audio.
+
+1/2 points:
+The answer is only partially correct. The student caught some relevant information from the audio, but a significant part of the expected answer is missing, or there is a clear misunderstanding of a key detail.
+
+0.5 points:
+The answer shows minimal understanding. The student may have recognized a single isolated swedish word or concept, but the overall answer fails to answer the actual question or is mostly guesswork.
+
+0 points:
+The answer is completely incorrect, off-topic, or illegible. The student did not understand the audio.
 """.strip(),
     ),
 )
@@ -66,8 +109,25 @@ class PromptLibraryService:
                 prompt = PromptTemplate.model_validate(item)
             except Exception:
                 continue
-            prompts.append(prompt)
+            prompts.append(self._normalize_prompt(prompt))
         return prompts
+
+    def _normalize_prompt(self, prompt: PromptTemplate) -> PromptTemplate:
+        try:
+            model_provider, model_name = normalize_vertex_ai_grading_selection(prompt.model_provider, prompt.model_name)
+        except ProviderConfigurationError:
+            model_provider, model_name = ("vertex_ai", DEFAULT_VERTEX_AI_GRADING_MODEL)
+        try:
+            reasoning_level = normalize_reasoning_level(prompt.reasoning_level)
+        except ProviderConfigurationError:
+            reasoning_level = "medium"
+        return prompt.model_copy(
+            update={
+                "model_provider": model_provider,
+                "model_name": model_name,
+                "reasoning_level": reasoning_level,
+            }
+        )
 
     def load_prompts(self) -> list[PromptTemplate]:
         built_in_prompts = [prompt.model_copy() for prompt in DEFAULT_PROMPT_TEMPLATES]
@@ -92,12 +152,16 @@ class PromptLibraryService:
             prompt_id=f"custom-{uuid4()}",
             title="Uusi kriteeri",
             body="",
+            model_provider="vertex_ai",
+            model_name=DEFAULT_VERTEX_AI_GRADING_MODEL,
+            reasoning_level="medium",
             built_in=False,
         )
 
     def save_prompt(self, prompt: PromptTemplate) -> PromptTemplate:
         self._ensure_parent_dir()
         custom_prompts = self._load_custom_prompts()
+        prompt = self._normalize_prompt(prompt)
         updated_prompts: list[PromptTemplate] = []
         replaced = False
         for existing in custom_prompts:

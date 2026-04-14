@@ -229,6 +229,113 @@ def test_get_current_page_url_uses_browser_session_api() -> None:
     assert current_url == "https://example.com/exam"
 
 
+def test_inspect_sanomapro_overview_passively_avoids_active_focus_wait(monkeypatch) -> None:
+    service = BrowserNavigationService(Settings())
+    page = StubInteractivePage("https://arvi.sanomapro.fi/as/teacher/assignment/demo/review")
+    session = StubInteractiveBrowserSession(page)
+    wait_called = {"value": False}
+
+    async def fake_wait_for_page_ready_passively(current_page, *, current_url=None, timeout_seconds=12.0):
+        wait_called["value"] = True
+        return True
+
+    async def fail_active_wait(browser_session, *, timeout_seconds=12.0):
+        raise AssertionError("Active exam-page wait should not be used for passive overview refresh.")
+
+    async def fake_extract_overview_state(current_page):
+        return SanomaOverviewState(
+            route="/as/teacher/assignment/demo/review",
+            assignment_title="Demo exam",
+            visible_cell_count=1,
+            reviewed_cell_count=0,
+            unreviewed_cell_count=1,
+            fully_reviewed=False,
+            exercise_columns=[],
+        )
+
+    monkeypatch.setattr(service, "_wait_for_page_ready_passively", fake_wait_for_page_ready_passively)
+    monkeypatch.setattr(service, "_wait_for_exam_page_ready", fail_active_wait)
+    monkeypatch.setattr(service, "_extract_sanomapro_overview_state", fake_extract_overview_state)
+
+    overview = asyncio.run(service.inspect_sanomapro_overview_passively(session))
+
+    assert wait_called["value"] is True
+    assert overview.assignment_title == "Demo exam"
+
+
+def test_inspect_sanomapro_overview_passively_can_recover_review_tab_from_login_tab(monkeypatch) -> None:
+    service = BrowserNavigationService(Settings())
+    session = StubBrowserSessionWithTabs()
+    session.current_page_url = "https://www.sanomapro.fi/auth/login/"
+    session.current_page_title = "SanomaPro"
+    session.tabs = [
+        SimpleNamespace(target_id="login-tab", url="https://www.sanomapro.fi/auth/login/", title="SanomaPro"),
+        SimpleNamespace(
+            target_id="review-tab",
+            url="https://arvi.sanomapro.fi/as/teacher/assignment/demo/review",
+            title="TEAS review",
+        ),
+    ]
+    session.raw_cdp_targets = [
+        {"targetId": tab.target_id, "url": tab.url, "title": tab.title, "type": "page"}
+        for tab in session.tabs
+    ]
+    wait_called = {"value": False}
+
+    async def fake_wait_for_page_ready_passively(current_page, *, current_url=None, timeout_seconds=12.0):
+        wait_called["value"] = True
+        return True
+
+    async def fake_extract_overview_state(current_page):
+        return SanomaOverviewState(
+            route="/as/teacher/assignment/demo/review",
+            assignment_title="Recovered demo exam",
+            visible_cell_count=1,
+            reviewed_cell_count=0,
+            unreviewed_cell_count=1,
+            fully_reviewed=False,
+            exercise_columns=[],
+        )
+
+    monkeypatch.setattr(service, "_wait_for_page_ready_passively", fake_wait_for_page_ready_passively)
+    monkeypatch.setattr(service, "_extract_sanomapro_overview_state", fake_extract_overview_state)
+
+    overview = asyncio.run(service.inspect_sanomapro_overview_passively(session))
+
+    assert wait_called["value"] is True
+    assert overview.assignment_title == "Recovered demo exam"
+    assert session.switched_target_id == "review-tab"
+    assert session.current_page_url == "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+
+
+def test_collect_tab_candidates_can_include_http_cdp_targets(monkeypatch) -> None:
+    service = BrowserNavigationService(Settings())
+    session = StubBrowserSessionWithTabs()
+    session.tabs = []
+    session.raw_cdp_targets = []
+
+    monkeypatch.setattr(service, "_discover_running_gradeagent_cdp_url", lambda profile_root: "http://127.0.0.1:9222")
+    monkeypatch.setattr(
+        service,
+        "_http_cdp_page_targets",
+        lambda cdp_url: [
+            {
+                "target_id": "review-tab",
+                "title": "TEAS review",
+                "url": "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review",
+            }
+        ],
+    )
+
+    candidates = asyncio.run(service._collect_tab_candidates(session))
+
+    assert any(candidate["target_id"] == "review-tab" for candidate in candidates)
+    assert any(
+        candidate["url"] == "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review"
+        for candidate in candidates
+    )
+
+
 def test_get_current_page_url_switches_to_best_existing_non_blank_tab() -> None:
     settings = Settings().model_copy(update={"browser_start_url": "https://www.sanomapro.fi/auth/login/"})
     service = BrowserNavigationService(settings)
@@ -897,6 +1004,7 @@ def test_write_sanomapro_grading_report_includes_student_answers_basis_and_links
                 submitted_prompt_text="Teacher grading instructions:\nPrompt body",
                 model_provider="vertex_ai",
                 model_name="gemini-3.1-pro-preview",
+                reasoning_level="medium",
                 model_response_text="Grade: 1 / 2 points",
                 exercise_url="https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise?studentId=123",
                 status="scored",
@@ -913,7 +1021,7 @@ def test_write_sanomapro_grading_report_includes_student_answers_basis_and_links
     assert "Group: Katjas grupp RUB14.7" in report_text
     assert "Category: Text 4" in report_text
     assert "Exercise number: 4" in report_text
-    assert "Model used: vertex_ai / gemini-3.1-pro-preview" in report_text
+    assert "Model used: vertex_ai / gemini-3.1-pro-preview / reasoning medium" in report_text
     assert "Submitted prompt:" in report_text
     assert "Teacher grading instructions:" in report_text
     assert "Model response:" in report_text
@@ -1456,36 +1564,7 @@ def test_run_sanomapro_autonomous_exam_flow_traverses_students_then_switches_exe
     ]
 
 
-def test_sanomapro_scoring_policy_detects_two_point_single_score_exercise() -> None:
-    service = BrowserNavigationService(Settings())
-    exercise_state = SanomaExerciseState(
-        route="https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise",
-        score_fields=[SanomaExerciseScoreField(index=0, max_score=2)],
-    )
-
-    assert service._sanomapro_detect_scoring_profile(exercise_state) == "single_score_max_2"
-    assert "give 1/2" in service._sanomapro_scoring_policy_text(exercise_state)
-    assert "give 1.5/2" in service._sanomapro_scoring_policy_text(exercise_state)
-    assert "means the same thing" in service._sanomapro_scoring_policy_text(exercise_state)
-    assert "usually 0/2" in service._sanomapro_scoring_policy_text(exercise_state)
-
-
-def test_sanomapro_scoring_policy_detects_three_point_single_score_exercise() -> None:
-    service = BrowserNavigationService(Settings())
-    exercise_state = SanomaExerciseState(
-        route="https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise",
-        score_fields=[SanomaExerciseScoreField(index=0, max_score=3)],
-    )
-
-    assert service._sanomapro_detect_scoring_profile(exercise_state) == "single_score_max_3"
-    assert "give 2/3" in service._sanomapro_scoring_policy_text(exercise_state)
-    assert "give 2.5/3" in service._sanomapro_scoring_policy_text(exercise_state)
-    assert "give 1/3" in service._sanomapro_scoring_policy_text(exercise_state)
-    assert "means the same thing" in service._sanomapro_scoring_policy_text(exercise_state)
-    assert "prefer 1/3 or 0/3 rather than 2/3" in service._sanomapro_scoring_policy_text(exercise_state)
-
-
-def test_build_sanomapro_score_decision_includes_dom_detected_two_point_policy(monkeypatch) -> None:
+def test_build_sanomapro_score_decision_uses_prompt_library_instructions_without_dom_policy_append(monkeypatch) -> None:
     service = BrowserNavigationService(
         Settings().model_copy(
             update={
@@ -1501,6 +1580,7 @@ def test_build_sanomapro_score_decision_includes_dom_detected_two_point_policy(m
         student_name="Eetu Ahola",
         exercise_label="Tehtävä 1",
         question_text="Kirjoita oikea muoto.",
+        target_text="Jag bor i Helsingfors",
         answer_text="Jag bor i Helsingfors",
         model_answer_text="Jag bor i Helsingfors.",
         score_fields=[
@@ -1533,12 +1613,17 @@ def test_build_sanomapro_score_decision_includes_dom_detected_two_point_policy(m
     model = CapturingModel()
     monkeypatch.setattr(
         "app.services.browser_navigation.build_explicit_grading_chat_model",
-        lambda settings, provider, model_name, routing_tier="standard": model,
+        lambda settings, provider, model_name, routing_tier="standard", reasoning_level=None: model,
     )
 
     decision = asyncio.run(
         service._build_sanomapro_score_decision(
-            ExamSessionGradingTaskCreate(instructions="Follow the exercise grading rules."),
+            ExamSessionGradingTaskCreate(
+                instructions=(
+                    'Grade this answer only according to this teacher rubric. '
+                    'Question: "(TARGET)". Answer: "(ANSWER)". Model answer: "(MODELANSWER)".'
+                )
+            ),
             exercise_state,
         )
     )
@@ -1550,16 +1635,22 @@ def test_build_sanomapro_score_decision_includes_dom_detected_two_point_policy(m
     assert audit is not None
     assert audit.model_provider == "vertex_ai"
     assert audit.model_name == "gemini-3.1-pro-preview"
+    assert audit.reasoning_level == "medium"
     assert audit.submitted_prompt_text == prompt_text
     assert "Minor punctuation issue." in audit.model_response_text
-    assert "Detected scoring profile from DOM:" in prompt_text
-    assert "single_score_max_2" in prompt_text
-    assert "give 1/2" in prompt_text
-    assert "give 1.5/2" in prompt_text
-    assert "meaning-equivalent phrasing as correct" in prompt_text
-    assert "Do not be generous when several independent errors accumulate" in prompt_text
-    assert "The `summary` must briefly explain why those points were awarded" in prompt_text
-    assert "Every field `rationale` must explain why that specific score was chosen." in prompt_text
+    assert 'Question: "Jag bor i Helsingfors"' in prompt_text
+    assert 'Answer: "Jag bor i Helsingfors"' in prompt_text
+    assert 'Model answer: "Jag bor i Helsingfors."' in prompt_text
+    assert "Detected scoring profile from DOM:" not in prompt_text
+    assert "Detected scoring policy:" not in prompt_text
+    assert "give 1/2" not in prompt_text
+    assert "give 1.5/2" not in prompt_text
+    assert "Grade only according to the teacher grading instructions above." in prompt_text
+    assert "Do not invent extra grading criteria or inferred scoring rules." in prompt_text
+    assert "If the teacher grading instructions define specific allowed point values, use only those exact values." in prompt_text
+    assert "Do not invent arbitrary decimals such as 0.98 unless the teacher grading instructions explicitly require them." in prompt_text
+    assert "Visible score fields in DOM order:" not in prompt_text
+    assert "Scoring UI constraints:" in prompt_text
 
 
 def test_build_sanomapro_score_decision_renders_prompt_library_placeholders(monkeypatch) -> None:
@@ -1584,7 +1675,7 @@ def test_build_sanomapro_score_decision_renders_prompt_library_placeholders(monk
         assignment_title="Demo exam",
         student_name="Aino",
         student_progress="Oppilas 4/31",
-        exercise_label="2p Lauseet [SWE -> FIN]",
+        exercise_label="2p Lauseet",
         current_section_name="TEXT 4",
         current_progress_document_label="4",
         objective_text="Käännä lauseet suomeksi.",
@@ -1623,7 +1714,7 @@ def test_build_sanomapro_score_decision_renders_prompt_library_placeholders(monk
     model = CapturingModel()
     monkeypatch.setattr(
         "app.services.browser_navigation.build_explicit_grading_chat_model",
-        lambda settings, provider, model_name, routing_tier="standard": model,
+        lambda settings, provider, model_name, routing_tier="standard", reasoning_level=None: model,
     )
 
     asyncio.run(
@@ -1702,7 +1793,7 @@ def test_build_sanomapro_score_decision_falls_back_when_model_returns_non_json(m
 
     monkeypatch.setattr(
         "app.services.browser_navigation.build_explicit_grading_chat_model",
-        lambda settings, provider, model_name, routing_tier="standard": FakeModel(),
+        lambda settings, provider, model_name, routing_tier="standard", reasoning_level=None: FakeModel(),
     )
 
     decision = asyncio.run(
@@ -1713,14 +1804,94 @@ def test_build_sanomapro_score_decision_falls_back_when_model_returns_non_json(m
     )
     audit = service.consume_last_sanomapro_score_audit()
 
-    assert decision.should_skip is False
-    assert len(decision.scores) == 1
-    assert 0 <= decision.scores[0].score <= 4
-    assert "Heuristic fallback applied" in decision.summary
+    assert decision.should_skip is True
+    assert decision.skip_reason == "invalid_model_response"
+    assert decision.scores == []
+    assert "Review this answer manually." in decision.summary
     assert audit is not None
-    assert audit.used_heuristic_fallback is True
+    assert audit.used_heuristic_fallback is False
     assert "This answer deserves 4 points because it is correct." in audit.model_response_text
     assert audit.model_name == "gemini-3.1-pro-preview"
+
+
+def test_build_sanomapro_score_decision_uses_prompt_model_and_reasoning_override(monkeypatch) -> None:
+    service = BrowserNavigationService(
+        Settings().model_copy(
+            update={
+                "sanomapro_exercise_grading_provider": "vertex_ai",
+                "sanomapro_exercise_grading_model": "gemini-3.1-pro-preview",
+                "vertex_ai_project": "gradeagent-test",
+            }
+        )
+    )
+    exercise_state = SanomaExerciseState(
+        route="https://arvi.sanomapro.fi/as/teacher/review/demo/activity/a/document/b/exercise",
+        assignment_title="Demo exam",
+        student_name="Aino",
+        exercise_label="Tehtävä 4",
+        question_text="Tycker du att det är möjligt att påverka?",
+        answer_text="Pidätkö mahdollisena vaikuttaa?",
+        model_answer_text="Onko sinusta mahdollista vaikuttaa?",
+        score_fields=[
+            SanomaExerciseScoreField(
+                index=0,
+                label="Pistemäärä",
+                current_value="",
+                container_text="Pistemäärä / 2 pistettä",
+                max_score=2,
+            )
+        ],
+    )
+    captured: dict[str, str | None] = {}
+
+    class FakeModel:
+        async def ainvoke(self, messages):
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "summary": "Meaning is preserved.",
+                        "confidence": 0.95,
+                        "scores": [{"index": 0, "score": 2, "rationale": "The meaning matches."}],
+                    }
+                )
+            )
+
+    def fake_build_model(settings, provider, model_name, routing_tier="standard", reasoning_level=None):
+        captured.update(
+            {
+                "provider": provider,
+                "model_name": model_name,
+                "routing_tier": routing_tier,
+                "reasoning_level": reasoning_level,
+            }
+        )
+        return FakeModel()
+
+    monkeypatch.setattr("app.services.browser_navigation.build_explicit_grading_chat_model", fake_build_model)
+
+    asyncio.run(
+        service._build_sanomapro_score_decision(
+            ExamSessionGradingTaskCreate(
+                instructions="Score the answer.",
+                grading_model_provider="vertex_ai",
+                grading_model_name="gemini-2.5-flash-lite",
+                grading_reasoning_level="low",
+            ),
+            exercise_state,
+        )
+    )
+    audit = service.consume_last_sanomapro_score_audit()
+
+    assert captured == {
+        "provider": "vertex_ai",
+        "model_name": "gemini-2.5-flash-lite",
+        "routing_tier": "standard",
+        "reasoning_level": "low",
+    }
+    assert audit is not None
+    assert audit.model_provider == "vertex_ai"
+    assert audit.model_name == "gemini-2.5-flash-lite"
+    assert audit.reasoning_level == "low"
 
 
 def test_grade_exam_from_current_page_uses_sanomapro_autonomy(monkeypatch, tmp_path) -> None:

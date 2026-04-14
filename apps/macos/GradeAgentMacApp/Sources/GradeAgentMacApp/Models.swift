@@ -4,9 +4,51 @@ struct GuiPromptTemplate: Codable, Identifiable, Hashable {
     let promptId: String
     var title: String
     var body: String
+    var modelProvider: String
+    var modelName: String
+    var reasoningLevel: String
     var builtIn: Bool
 
     var id: String { promptId }
+
+    private enum CodingKeys: String, CodingKey {
+        case promptId
+        case title
+        case body
+        case modelProvider
+        case modelName
+        case reasoningLevel
+        case builtIn
+    }
+
+    init(
+        promptId: String,
+        title: String,
+        body: String,
+        modelProvider: String = "vertex_ai",
+        modelName: String = "gemini-3.1-pro-preview",
+        reasoningLevel: String = "medium",
+        builtIn: Bool
+    ) {
+        self.promptId = promptId
+        self.title = title
+        self.body = body
+        self.modelProvider = modelProvider
+        self.modelName = modelName
+        self.reasoningLevel = reasoningLevel
+        self.builtIn = builtIn
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        promptId = try container.decode(String.self, forKey: .promptId)
+        title = try container.decode(String.self, forKey: .title)
+        body = try container.decode(String.self, forKey: .body)
+        modelProvider = try container.decodeIfPresent(String.self, forKey: .modelProvider) ?? "vertex_ai"
+        modelName = try container.decodeIfPresent(String.self, forKey: .modelName) ?? "gemini-3.1-pro-preview"
+        reasoningLevel = try container.decodeIfPresent(String.self, forKey: .reasoningLevel) ?? "medium"
+        builtIn = try container.decodeIfPresent(Bool.self, forKey: .builtIn) ?? false
+    }
 }
 
 struct GuiExerciseColumn: Codable, Identifiable, Hashable {
@@ -45,6 +87,9 @@ struct GuiGradeExerciseRequest: Codable {
     let instructions: String
     let promptId: String?
     let promptTitle: String?
+    let modelProvider: String?
+    let modelName: String?
+    let reasoningLevel: String?
     let maxSteps: Int
 }
 
@@ -52,6 +97,9 @@ struct GuiPromptSaveRequest: Codable {
     let promptId: String?
     let title: String
     let body: String
+    let modelProvider: String
+    let modelName: String
+    let reasoningLevel: String
 }
 
 struct ExamSessionGradingTaskResult: Codable {
@@ -65,6 +113,39 @@ struct ExamSessionGradingTaskResult: Codable {
 
 struct GuiGradeExerciseResponse: Codable {
     let result: ExamSessionGradingTaskResult
+    let exercises: [GuiExerciseColumn]
+}
+
+struct GuiAutopilotQueueItemRequest: Codable, Identifiable, Hashable {
+    let columnKey: String
+    let instructions: String
+    let promptId: String?
+    let promptTitle: String?
+    let modelProvider: String?
+    let modelName: String?
+    let reasoningLevel: String?
+    let maxSteps: Int
+
+    var id: String { columnKey }
+}
+
+struct GuiAutopilotQueueItemResult: Codable, Identifiable {
+    let columnKey: String
+    let exerciseTitle: String?
+    let promptId: String?
+    let promptTitle: String?
+    let result: ExamSessionGradingTaskResult
+
+    var id: String { "\(columnKey)|\(result.jobId)" }
+}
+
+struct GuiAutopilotRunRequest: Codable {
+    let items: [GuiAutopilotQueueItemRequest]
+}
+
+struct GuiAutopilotRunResponse: Codable {
+    let summary: String
+    let items: [GuiAutopilotQueueItemResult]
     let exercises: [GuiExerciseColumn]
 }
 
@@ -90,6 +171,7 @@ struct GuiStatisticsEntry: Codable, Identifiable, Hashable {
     let submittedPromptText: String?
     let modelProvider: String?
     let modelName: String?
+    let reasoningLevel: String?
     let modelResponseText: String?
     let repairPromptText: String?
     let repairResponseText: String?
@@ -97,6 +179,104 @@ struct GuiStatisticsEntry: Codable, Identifiable, Hashable {
     let fallbackReason: String?
     let exerciseURL: String
     let status: String
+
+    private enum CodingKeys: String, CodingKey {
+        case studentName
+        case studentProgress
+        case assignmentTitle
+        case groupName
+        case categoryName
+        case exerciseLabel
+        case exerciseNumber
+        case objectiveText
+        case targetText
+        case questionText
+        case answerText
+        case modelAnswerText
+        case pointsText
+        case scoreAwarded
+        case scorePossible
+        case basisLines
+        case promptTemplateText
+        case renderedInstructionsText
+        case submittedPromptText
+        case modelProvider
+        case modelName
+        case reasoningLevel
+        case modelResponseText
+        case repairPromptText
+        case repairResponseText
+        case usedHeuristicFallback
+        case fallbackReason
+        case exerciseUrl
+        case status
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        studentName = try container.decode(String.self, forKey: .studentName)
+        studentProgress = try container.decodeIfPresent(String.self, forKey: .studentProgress)
+        assignmentTitle = try container.decode(String.self, forKey: .assignmentTitle)
+        groupName = try container.decodeIfPresent(String.self, forKey: .groupName)
+        categoryName = try container.decodeIfPresent(String.self, forKey: .categoryName)
+        exerciseLabel = try container.decodeIfPresent(String.self, forKey: .exerciseLabel)
+        exerciseNumber = try container.decodeIfPresent(String.self, forKey: .exerciseNumber)
+        objectiveText = try container.decode(String.self, forKey: .objectiveText)
+        targetText = try container.decode(String.self, forKey: .targetText)
+        questionText = try container.decode(String.self, forKey: .questionText)
+        answerText = try container.decode(String.self, forKey: .answerText)
+        modelAnswerText = try container.decode(String.self, forKey: .modelAnswerText)
+        pointsText = try container.decode(String.self, forKey: .pointsText)
+        scoreAwarded = try container.decodeIfPresent(Double.self, forKey: .scoreAwarded)
+        scorePossible = try container.decodeIfPresent(Double.self, forKey: .scorePossible)
+        basisLines = try container.decodeIfPresent([String].self, forKey: .basisLines) ?? []
+        promptTemplateText = try container.decodeIfPresent(String.self, forKey: .promptTemplateText)
+        renderedInstructionsText = try container.decodeIfPresent(String.self, forKey: .renderedInstructionsText)
+        submittedPromptText = try container.decodeIfPresent(String.self, forKey: .submittedPromptText)
+        modelProvider = try container.decodeIfPresent(String.self, forKey: .modelProvider)
+        modelName = try container.decodeIfPresent(String.self, forKey: .modelName)
+        reasoningLevel = try container.decodeIfPresent(String.self, forKey: .reasoningLevel)
+        modelResponseText = try container.decodeIfPresent(String.self, forKey: .modelResponseText)
+        repairPromptText = try container.decodeIfPresent(String.self, forKey: .repairPromptText)
+        repairResponseText = try container.decodeIfPresent(String.self, forKey: .repairResponseText)
+        usedHeuristicFallback = try container.decodeIfPresent(Bool.self, forKey: .usedHeuristicFallback)
+        fallbackReason = try container.decodeIfPresent(String.self, forKey: .fallbackReason)
+        exerciseURL = try container.decode(String.self, forKey: .exerciseUrl)
+        status = try container.decode(String.self, forKey: .status)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(studentName, forKey: .studentName)
+        try container.encodeIfPresent(studentProgress, forKey: .studentProgress)
+        try container.encode(assignmentTitle, forKey: .assignmentTitle)
+        try container.encodeIfPresent(groupName, forKey: .groupName)
+        try container.encodeIfPresent(categoryName, forKey: .categoryName)
+        try container.encodeIfPresent(exerciseLabel, forKey: .exerciseLabel)
+        try container.encodeIfPresent(exerciseNumber, forKey: .exerciseNumber)
+        try container.encode(objectiveText, forKey: .objectiveText)
+        try container.encode(targetText, forKey: .targetText)
+        try container.encode(questionText, forKey: .questionText)
+        try container.encode(answerText, forKey: .answerText)
+        try container.encode(modelAnswerText, forKey: .modelAnswerText)
+        try container.encode(pointsText, forKey: .pointsText)
+        try container.encodeIfPresent(scoreAwarded, forKey: .scoreAwarded)
+        try container.encodeIfPresent(scorePossible, forKey: .scorePossible)
+        try container.encode(basisLines, forKey: .basisLines)
+        try container.encodeIfPresent(promptTemplateText, forKey: .promptTemplateText)
+        try container.encodeIfPresent(renderedInstructionsText, forKey: .renderedInstructionsText)
+        try container.encodeIfPresent(submittedPromptText, forKey: .submittedPromptText)
+        try container.encodeIfPresent(modelProvider, forKey: .modelProvider)
+        try container.encodeIfPresent(modelName, forKey: .modelName)
+        try container.encodeIfPresent(reasoningLevel, forKey: .reasoningLevel)
+        try container.encodeIfPresent(modelResponseText, forKey: .modelResponseText)
+        try container.encodeIfPresent(repairPromptText, forKey: .repairPromptText)
+        try container.encodeIfPresent(repairResponseText, forKey: .repairResponseText)
+        try container.encodeIfPresent(usedHeuristicFallback, forKey: .usedHeuristicFallback)
+        try container.encodeIfPresent(fallbackReason, forKey: .fallbackReason)
+        try container.encode(exerciseURL, forKey: .exerciseUrl)
+        try container.encode(status, forKey: .status)
+    }
 
     var id: String {
         [
@@ -137,4 +317,100 @@ struct GuiStatisticsResponse: Codable {
 
 struct ApiErrorResponse: Codable {
     let detail: String
+}
+
+struct PromptModelOption: Identifiable, Hashable {
+    let provider: String
+    let modelName: String
+    let title: String
+    let subtitle: String
+
+    var id: String { "\(provider)|\(modelName)" }
+    var displayName: String { "\(title) (\(subtitle))" }
+}
+
+struct PromptReasoningOption: Identifiable, Hashable {
+    let value: String
+    let title: String
+    let subtitle: String
+
+    var id: String { value }
+}
+
+enum PromptEditorOptions {
+    static let modelOptions: [PromptModelOption] = [
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-3.1-pro-preview",
+            title: "Gemini 3.1 Pro",
+            subtitle: "Vertex AI Preview"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-3-pro-preview",
+            title: "Gemini 3 Pro",
+            subtitle: "Vertex AI Preview"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-3.1-flash-lite-preview",
+            title: "Gemini 3.1 Flash-Lite",
+            subtitle: "Vertex AI Preview"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-3-flash-preview",
+            title: "Gemini 3 Flash",
+            subtitle: "Vertex AI Preview"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-2.5-pro",
+            title: "Gemini 2.5 Pro",
+            subtitle: "Vertex AI"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-2.5-flash",
+            title: "Gemini 2.5 Flash",
+            subtitle: "Vertex AI"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-2.5-flash-lite",
+            title: "Gemini 2.5 Flash-Lite",
+            subtitle: "Vertex AI"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-2.5-flash-preview-09-2025",
+            title: "Gemini 2.5 Flash",
+            subtitle: "Vertex AI Preview 09-2025"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-2.5-flash-lite-preview-09-2025",
+            title: "Gemini 2.5 Flash-Lite",
+            subtitle: "Vertex AI Preview 09-2025"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-2.0-flash-001",
+            title: "Gemini 2.0 Flash",
+            subtitle: "Vertex AI"
+        ),
+        PromptModelOption(
+            provider: "vertex_ai",
+            modelName: "gemini-2.0-flash-lite-001",
+            title: "Gemini 2.0 Flash-Lite",
+            subtitle: "Vertex AI"
+        ),
+    ]
+
+    static let reasoningOptions: [PromptReasoningOption] = [
+        PromptReasoningOption(value: "off", title: "Pois", subtitle: "Nopein mahdollinen arviointi"),
+        PromptReasoningOption(value: "low", title: "Matala", subtitle: "Kevyt päättely"),
+        PromptReasoningOption(value: "medium", title: "Keskitaso", subtitle: "Tasapainoinen oletus"),
+        PromptReasoningOption(value: "high", title: "Korkea", subtitle: "Tarkempi päättely"),
+    ]
 }

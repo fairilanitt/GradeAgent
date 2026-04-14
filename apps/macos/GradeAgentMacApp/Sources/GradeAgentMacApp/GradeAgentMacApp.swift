@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct GradeAgentMacApp: App {
@@ -62,6 +63,8 @@ struct RootView: View {
                             switch store.selectedPage {
                             case .ohjaus:
                                 ControlPageView(compact: compactWindow)
+                            case .autopilot:
+                                AutopilotPageView(compact: compactWindow)
                             case .kriteerit:
                                 CriteriaPageView(compact: compactWindow)
                             case .tilastot:
@@ -278,6 +281,7 @@ struct ExerciseCardView: View {
             Spacer(minLength: 0)
 
             Button {
+                store.selectExercise(exercise)
                 Task { await store.gradeExercise(exercise) }
             } label: {
                 HStack(spacing: 8) {
@@ -285,14 +289,14 @@ struct ExerciseCardView: View {
                     Text(
                         store.isGrading(exercise)
                             ? "Arvioidaan..."
-                            : store.isSelected(exercise) ? "Aloita arviointi" : "Valitse tehtävä ensin"
+                            : "Aloita arviointi"
                     )
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#6F937C")))
-            .disabled(store.isGrading(exercise) || !store.hasPrompts || !store.isSelected(exercise))
+            .disabled(store.isGrading(exercise) || !store.hasPrompts)
         }
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -320,6 +324,312 @@ struct ExerciseCardView: View {
             set: { newValue in
                 store.setPrompt(newValue, for: exercise.columnKey)
             }
+        )
+    }
+}
+
+struct AutopilotPageView: View {
+    @EnvironmentObject private var store: GuiStore
+    let compact: Bool
+
+    var body: some View {
+        GlassCard(fillOpacity: 0.09, strokeOpacity: 0.08) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Autopilot")
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                        Text("Rakenna tehtäväjono havaituista tehtävistä. Autopilot suorittaa ne tässä järjestyksessä yksi kerrallaan.")
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.76))
+                    }
+
+                    Spacer(minLength: 0)
+
+                    HStack(spacing: 10) {
+                        if store.autopilotRunning || store.gradingColumnKey != nil {
+                            Button {
+                                Task { await store.stopCurrentGrading() }
+                            } label: {
+                                Label("Pysäytä", systemImage: "stop.fill")
+                            }
+                            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#8C7C78")))
+                        }
+
+                        Button {
+                            Task { await store.startAutopilot() }
+                        } label: {
+                            Label(
+                                store.autopilotRunning ? "Autopilot käynnissä..." : "Aloita",
+                                systemImage: store.autopilotRunning ? "hourglass" : "play.fill"
+                            )
+                        }
+                        .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#6F937C")))
+                        .disabled(store.autopilotRunning || store.autopilotQueueExercises.isEmpty || !store.hasPrompts)
+                    }
+                }
+
+                AdaptiveAxisStack(horizontal: !compact, spacing: 14) {
+                    MiniInfoPill(label: "Jonossa", value: "\(store.autopilotQueueExercises.count)")
+                    MiniInfoPill(label: "Saatavilla", value: "\(store.availableAutopilotExercises.count)")
+                    MiniInfoPill(
+                        label: "Tila",
+                        value: store.autopilotRunning
+                            ? "Autopilot arvioi nyt valittuja tehtäviä"
+                            : (store.latestErrorMessage ?? store.resultMessage)
+                    )
+                }
+
+                Divider()
+                    .overlay(Color.white.opacity(0.14))
+
+                AdaptiveAxisStack(horizontal: !compact, spacing: 18) {
+                    AutopilotAvailableExercisesPane(compact: compact)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                    AutopilotQueuePane(compact: compact)
+                        .frame(maxWidth: compact ? .infinity : 360, maxHeight: .infinity, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct AutopilotAvailableExercisesPane: View {
+    @EnvironmentObject private var store: GuiStore
+    let compact: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Havaitut tehtävät")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                Spacer(minLength: 0)
+                Text("Lisää jonoon yhdellä klikkauksella")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.68))
+            }
+
+            if store.availableAutopilotExercises.isEmpty {
+                EmptyStateView(
+                    title: "Ei lisättäviä tehtäviä",
+                    message: "Kun arvioimattomia tehtäviä havaitaan, ne ilmestyvät tähän tileinä. Jo jonossa olevat tehtävät poistuvat tästä näkymästä."
+                )
+                .frame(maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.adaptive(minimum: compact ? 210 : 230, maximum: compact ? 240 : 280), spacing: 14, alignment: .top)
+                        ],
+                        alignment: .leading,
+                        spacing: 14
+                    ) {
+                        ForEach(store.availableAutopilotExercises) { exercise in
+                            AutopilotSourceTile(exercise: exercise)
+                                .frame(maxWidth: .infinity, minHeight: compact ? 214 : 232, alignment: .topLeading)
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+    }
+}
+
+private struct AutopilotSourceTile: View {
+    @EnvironmentObject private var store: GuiStore
+    let exercise: GuiExerciseColumn
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(exercise.title)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                    if let categoryName = exercise.categoryName {
+                        PromptTag(title: categoryName)
+                    }
+                }
+                Spacer(minLength: 0)
+                if let exerciseNumber = exercise.exerciseNumber {
+                    PromptTag(title: "Tehtävä \(exerciseNumber)")
+                }
+            }
+
+            ExerciseInfoLine(label: "Arvioimatta", value: "\(exercise.pendingCellCount) / \(exercise.totalCellCount)")
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Kriteeri")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                Picker("Valittu kriteeri", selection: bindingForPromptSelection) {
+                    ForEach(store.prompts) { prompt in
+                        Text(prompt.title).tag(prompt.promptId)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .tint(.white)
+
+                Text(store.selectedPrompt(for: exercise)?.title ?? "Valitse kriteeri")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.74))
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                store.enqueueAutopilotExercise(exercise)
+            } label: {
+                Label("Lisää jonoon", systemImage: "plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#7E8A93")))
+            .disabled(!store.hasPrompts)
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
+    }
+
+    private var bindingForPromptSelection: Binding<String> {
+        Binding(
+            get: {
+                store.selectedPromptByColumn[exercise.columnKey] ?? store.prompts.first?.promptId ?? ""
+            },
+            set: { newValue in
+                store.setPrompt(newValue, for: exercise.columnKey)
+            }
+        )
+    }
+}
+
+private struct AutopilotQueuePane: View {
+    @EnvironmentObject private var store: GuiStore
+    let compact: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Suoritusjärjestys")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                Spacer(minLength: 0)
+                Text("\(store.autopilotQueueExercises.count) tehtävää")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.68))
+            }
+
+            if store.autopilotQueueExercises.isEmpty {
+                EmptyStateView(
+                    title: "Autopilot-jono on tyhjä",
+                    message: "Lisää tehtäviä vasemmalta. Jonossa olevia tilejä voi järjestää vetämällä niitä uuteen paikkaan."
+                )
+                .frame(maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(Array(store.autopilotQueueExercises.enumerated()), id: \.element.columnKey) { index, exercise in
+                            AutopilotQueuedTile(exercise: exercise, position: index + 1)
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+    }
+}
+
+@MainActor
+private struct AutopilotQueueDropDelegate: DropDelegate {
+    let targetColumnKey: String
+    let store: GuiStore
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedKey = store.draggedAutopilotColumnKey else { return }
+        store.moveAutopilotExercise(draggedKey, before: targetColumnKey)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        store.draggedAutopilotColumnKey = nil
+        return true
+    }
+}
+
+private struct AutopilotQueuedTile: View {
+    @EnvironmentObject private var store: GuiStore
+    let exercise: GuiExerciseColumn
+    let position: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Text("\(position)")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Color.white.opacity(0.16)))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(exercise.title)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                    Text(store.selectedPrompt(for: exercise)?.title ?? "Valitse kriteeri")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    store.removeAutopilotExercise(exercise.columnKey)
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(CircularActionButtonStyle(tint: Color(hex: "#7E8A93")))
+            }
+
+            ExerciseInfoLine(label: "Arvioimatta", value: "\(exercise.pendingCellCount) / \(exercise.totalCellCount)")
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color.white.opacity(store.draggedAutopilotColumnKey == exercise.columnKey ? 0.15 : 0.09))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
+        .onDrag {
+            store.draggedAutopilotColumnKey = exercise.columnKey
+            return NSItemProvider(object: NSString(string: exercise.columnKey))
+        }
+        .onDrop(
+            of: [UTType.text],
+            delegate: AutopilotQueueDropDelegate(targetColumnKey: exercise.columnKey, store: store)
         )
     }
 }
