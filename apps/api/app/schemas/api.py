@@ -239,6 +239,18 @@ class GuiExerciseColumn(BaseModel):
     pending_cell_count: int = 0
 
 
+class GuiOverviewObservedScore(BaseModel):
+    selector_index: int = 0
+    student_name: str = ""
+    score_text: str = ""
+    score_awarded: float | None = None
+    score_possible: float | None = None
+    reviewed: bool = False
+    category_name: str | None = None
+    exercise_label: str | None = None
+    exercise_number: str | None = None
+
+
 class GuiStateResponse(BaseModel):
     browser_ready: bool = False
     session_id: str | None = None
@@ -256,6 +268,7 @@ class GuiOverviewResponse(BaseModel):
     students_answered_count: int | None = None
     students_total_count: int | None = None
     exercises: list[GuiExerciseColumn] = Field(default_factory=list)
+    observed_scores: list[GuiOverviewObservedScore] = Field(default_factory=list)
 
 
 class GuiGradeExerciseRequest(BaseModel):
@@ -340,6 +353,7 @@ class GuiStatisticsRun(BaseModel):
     job_id: str
     recorded_at: datetime
     status: str
+    interrupted: bool = False
     summary: str
     assignment_title: str = ""
     group_name: str | None = None

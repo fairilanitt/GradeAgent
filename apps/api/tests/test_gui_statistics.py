@@ -31,6 +31,7 @@ def test_gui_statistics_store_appends_and_loads_runs(tmp_path) -> None:
         job_id="job-2",
         recorded_at=datetime(2026, 4, 5, 10, 0, tzinfo=timezone.utc),
         status="needs_review",
+        interrupted=True,
         summary="Second run",
         category_name="Grammatik",
         exercise_label="Tehtävä 22",
@@ -42,6 +43,7 @@ def test_gui_statistics_store_appends_and_loads_runs(tmp_path) -> None:
     loaded = store.load_runs()
 
     assert [run.run_id for run in loaded] == ["run-2", "run-1"]
+    assert loaded[0].interrupted is True
     assert loaded[0].category_name == "Grammatik"
     assert loaded[1].entries[0].score_possible == 2.0
     assert loaded[1].entries[0].model_name == "gemini-3.1-pro-preview"

@@ -7,6 +7,7 @@ enum AppPage: String, CaseIterable, Identifiable {
     case kriteerit
     case tilastot
     case lokit
+    case asetukset
 
     var id: String { rawValue }
 
@@ -22,6 +23,8 @@ enum AppPage: String, CaseIterable, Identifiable {
             return "Tilastot"
         case .lokit:
             return "Lokit"
+        case .asetukset:
+            return "Asetukset"
         }
     }
 
@@ -37,12 +40,16 @@ enum AppPage: String, CaseIterable, Identifiable {
             return "chart.xyaxis.line"
         case .lokit:
             return "text.justify"
+        case .asetukset:
+            return "gearshape"
         }
     }
 }
 
 @MainActor
 final class GuiStore: ObservableObject {
+    private static let hideStudentNamesDefaultsKey = "gradeagent.hideStudentNamesInGui"
+
     @Published var selectedPage: AppPage = .ohjaus
     @Published var browserReady = false
     @Published var sessionId: String?
@@ -75,6 +82,11 @@ final class GuiStore: ObservableObject {
     @Published var isLoadingInitialState = false
     @Published var latestErrorMessage: String?
     @Published var statisticsErrorMessage: String?
+    @Published var hideStudentNamesInGui = UserDefaults.standard.bool(forKey: GuiStore.hideStudentNamesDefaultsKey) {
+        didSet {
+            UserDefaults.standard.set(hideStudentNamesInGui, forKey: GuiStore.hideStudentNamesDefaultsKey)
+        }
+    }
 
     let promptPlaceholderHelp =
         "Tuetut paikkamerkit: (STUDENT), (PROGRESSION), (OBJECTIVE), (TARGET), (ANSWER), (MODELANSWER), (MAXPOINTS), (GROUP), (STUDENTS), (CATEGORY), (EXERCISE NUMBER). Vanhat paikkamerkit kuten (SWE PHRASE) ja (FIN ANSWER) toimivat edelleen."
@@ -119,6 +131,18 @@ final class GuiStore: ObservableObject {
 
     var welcomeTitle: String {
         "Tervetuloa, User"
+    }
+
+    var displayModeSummary: String {
+        hideStudentNamesInGui ? "Opiskelijoiden nimet piilotetaan käyttöliittymästä." : "Opiskelijoiden nimet näkyvät käyttöliittymässä."
+    }
+
+    var displayedStatusMessage: String {
+        redactedTextForDisplay(statusMessage)
+    }
+
+    var displayedResultMessage: String {
+        redactedTextForDisplay(resultMessage)
     }
 
     var detectedExerciseCount: Int {
@@ -192,6 +216,50 @@ final class GuiStore: ObservableObject {
         }
 
         updateAutomaticOverviewDetection()
+    }
+
+    func visibleStudentName(_ rawName: String) -> String {
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = trimmedName.isEmpty ? "Tuntematon opiskelija" : trimmedName
+        guard hideStudentNamesInGui else { return fallback }
+        guard !trimmedName.isEmpty else { return "Piilotettu opiskelija" }
+
+        var accumulator = 5381
+        for scalar in trimmedName.unicodeScalars {
+            accumulator = ((accumulator << 5) &+ accumulator) &+ Int(scalar.value)
+        }
+        let stableCode = abs(accumulator % 10_000)
+        return String(format: "Opiskelija %04d", stableCode)
+    }
+
+    func redactedTextForDisplay(_ rawText: String) -> String {
+        guard hideStudentNamesInGui else { return rawText }
+        var redacted = rawText
+        for name in knownStudentNames.sorted(by: { $0.count > $1.count }) {
+            redacted = redacted.replacingOccurrences(of: name, with: visibleStudentName(name))
+        }
+        return redacted
+    }
+
+    private var knownStudentNames: Set<String> {
+        var names = Set<String>()
+        for run in statisticsRuns {
+            for entry in run.entries {
+                let trimmed = entry.studentName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    names.insert(trimmed)
+                }
+            }
+        }
+        if let overview {
+            for observed in overview.observedScores {
+                let trimmed = observed.studentName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    names.insert(trimmed)
+                }
+            }
+        }
+        return names
     }
 
     func startBrowser() async {
@@ -304,7 +372,8 @@ final class GuiStore: ObservableObject {
                 groupName: overview?.groupName,
                 studentsAnsweredCount: overview?.studentsAnsweredCount,
                 studentsTotalCount: overview?.studentsTotalCount,
-                exercises: response.exercises
+                exercises: response.exercises,
+                observedScores: overview?.observedScores ?? []
             )
             syncExercisePromptSelections()
             syncAutopilotQueueWithOverview()
@@ -412,7 +481,8 @@ final class GuiStore: ObservableObject {
                 groupName: overview?.groupName,
                 studentsAnsweredCount: overview?.studentsAnsweredCount,
                 studentsTotalCount: overview?.studentsTotalCount,
-                exercises: response.exercises
+                exercises: response.exercises,
+                observedScores: overview?.observedScores ?? []
             )
             syncExercisePromptSelections()
             syncAutopilotQueueWithOverview()

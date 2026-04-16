@@ -406,6 +406,16 @@ class GuiRuntime:
             return
         self.service.request_stop_grading()
 
+    def _statistics_run_interrupted(self, result: ExamSessionGradingTaskResult) -> bool:
+        normalized_summary = result.summary.lower()
+        if "interrupted" in normalized_summary:
+            return True
+        if "stopped" in normalized_summary and "grace" in normalized_summary:
+            return True
+        if "stopped" in normalized_summary and "user" in normalized_summary:
+            return True
+        return False
+
     def _record_statistics_run(
         self,
         *,
@@ -431,6 +441,7 @@ class GuiRuntime:
             job_id=result.job_id,
             recorded_at=datetime.now(timezone.utc),
             status=result.status,
+            interrupted=self._statistics_run_interrupted(result),
             summary=result.summary,
             assignment_title=(
                 primary_entry.assignment_title

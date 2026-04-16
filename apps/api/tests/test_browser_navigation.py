@@ -23,6 +23,7 @@ from app.services.browser_navigation import (
     SanomaGradingReportEntry,
     SanomaExerciseState,
     SanomaOverviewExerciseColumn,
+    SanomaOverviewObservedScore,
     SanomaOverviewState,
     SanomaScoreDecision,
     SanomaScoreDecisionField,
@@ -979,6 +980,41 @@ def test_extract_sanomapro_overview_state_groups_exercise_columns() -> None:
     assert [column.exercise_number for column in state.exercise_columns] == ["1", "2"]
     assert state.exercise_columns[0].first_pending_selector_index == 1
     assert state.exercise_columns[1].pending_cell_count == 2
+
+
+def test_extract_sanomapro_overview_state_includes_observed_scores() -> None:
+    service = BrowserNavigationService(Settings())
+    page = StubInteractivePage("https://arvi.sanomapro.fi/as/teacher/assignment/demo/review")
+    page.evaluate_result = {
+        "route": "/as/teacher/assignment/demo/review",
+        "assignment_title": "Demo exam",
+        "visible_cell_count": 2,
+        "reviewed_cell_count": 2,
+        "unreviewed_cell_count": 0,
+        "fully_reviewed": True,
+        "pending_candidates": [],
+        "exercise_columns": [],
+        "observed_scores": [
+            {
+                "selector_index": 0,
+                "student_name": "Aada Harri",
+                "score_text": "1 / 2",
+                "score_awarded": 1.0,
+                "score_possible": 2.0,
+                "reviewed": True,
+                "category_name": "Text 4",
+                "exercise_label": "Text 4 / 4",
+                "exercise_number": "4",
+            }
+        ],
+    }
+
+    state = asyncio.run(service._extract_sanomapro_overview_state(page))
+
+    assert isinstance(state.observed_scores[0], SanomaOverviewObservedScore)
+    assert state.observed_scores[0].student_name == "Aada Harri"
+    assert state.observed_scores[0].score_awarded == 1.0
+    assert state.observed_scores[0].score_possible == 2.0
 
 
 def test_sanomapro_reasoning_overlay_text_omits_placeholder_before_decision() -> None:

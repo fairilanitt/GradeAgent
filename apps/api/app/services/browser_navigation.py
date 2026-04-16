@@ -85,6 +85,18 @@ class SanomaOverviewExerciseColumn(BaseModel):
     first_pending_selector_index: int | None = None
 
 
+class SanomaOverviewObservedScore(BaseModel):
+    selector_index: int = Field(default=0, ge=0)
+    student_name: str = ""
+    score_text: str = ""
+    score_awarded: float | None = None
+    score_possible: float | None = None
+    reviewed: bool = False
+    category_name: str | None = None
+    exercise_label: str | None = None
+    exercise_number: str | None = None
+
+
 class SanomaOverviewState(BaseModel):
     route: str = ""
     assignment_title: str = ""
@@ -97,6 +109,7 @@ class SanomaOverviewState(BaseModel):
     fully_reviewed: bool = False
     pending_candidates: list[SanomaOverviewCandidate] = Field(default_factory=list)
     exercise_columns: list[SanomaOverviewExerciseColumn] = Field(default_factory=list)
+    observed_scores: list[SanomaOverviewObservedScore] = Field(default_factory=list)
 
 
 class SanomaExerciseScoreField(BaseModel):
@@ -2542,6 +2555,21 @@ JSON schema instructions:
               const textOf = (value) => (value || '').replace(/\\s+/g, ' ').trim();
               const overlapWidth = (leftA, rightA, leftB, rightB) =>
                 Math.max(0, Math.min(rightA, rightB) - Math.max(leftA, leftB));
+              const parseVisibleScore = (text) => {
+                const match = textOf(text).match(/(-|[0-9]+(?:[.,][0-9]+)?)\\s*\\/\\s*([0-9]+(?:[.,][0-9]+)?)/);
+                if (!match) {
+                  return { awarded: null, possible: null };
+                }
+                const parseMaybeNumber = (value) => {
+                  if (!value || value === '-') return null;
+                  const parsed = Number.parseFloat(value.replace(',', '.'));
+                  return Number.isFinite(parsed) ? parsed : null;
+                };
+                return {
+                  awarded: parseMaybeNumber(match[1]),
+                  possible: parseMaybeNumber(match[2]),
+                };
+              };
               const definitionTextFor = (label) => {
                 const termSelectors = 'dt, term, [role="term"]';
                 for (const term of Array.from(document.querySelectorAll(termSelectors))) {
@@ -2562,6 +2590,7 @@ JSON schema instructions:
               };
               const cellSelector = 'div.review-assignment__document[ng-click="$ctrl.gotoReview(document, student)"]';
               const scoreValueSelector = '.review-assignment__document-score';
+              const studentNameSelector = '.review-assignment__cell.review-assignment__cell--content';
               const headerSelectors = [
                 '.review-assignment__header *',
                 '[class*="review-assignment__header"] *',
@@ -2589,6 +2618,46 @@ JSON schema instructions:
                 'Ei',
                 groupName || '',
               ].filter(Boolean));
+              const studentRowsRaw = Array.from(document.querySelectorAll(studentNameSelector))
+                .map((cell, selectorIndex) => {
+                  const rect = cell.getBoundingClientRect();
+                  return {
+                    selector_index: selectorIndex,
+                    text: textOf(cell.innerText || cell.textContent || ''),
+                    top: rect.top,
+                    bottom: rect.bottom,
+                    left: rect.left,
+                    right: rect.right,
+                    center_y: (rect.top + rect.bottom) / 2,
+                    width: rect.width,
+                    height: rect.height,
+                  };
+                })
+                .filter(
+                  (row) =>
+                    row.text &&
+                    row.width > 8 &&
+                    row.height > 8 &&
+                    !ignoredHeadingTexts.has(row.text) &&
+                    !/^Oppilaat?\\s+\\d+\\s*\\/\\s*\\d+/i.test(row.text)
+                )
+                .sort((leftRow, rightRow) => leftRow.top - rightRow.top || leftRow.selector_index - rightRow.selector_index);
+              const studentRows = [];
+              for (const row of studentRowsRaw) {
+                const existing = studentRows.find(
+                  (candidate) => Math.abs(candidate.center_y - row.center_y) <= 8
+                );
+                if (!existing) {
+                  studentRows.push(row);
+                  continue;
+                }
+                if (row.text.length > existing.text.length) {
+                  existing.text = row.text;
+                  existing.top = row.top;
+                  existing.bottom = row.bottom;
+                  existing.center_y = row.center_y;
+                }
+              }
               const cells = Array.from(document.querySelectorAll(cellSelector)).map((cell, selectorIndex) => {
                 const rect = cell.getBoundingClientRect();
                 const reviewed = cell.classList.contains('review-assignment__document--reviewed');
@@ -2694,6 +2763,29 @@ JSON schema instructions:
                   (exerciseNumber ? `Exercise ${exerciseNumber}` : null) ||
                   `Exercise ${columnIndex + 1}`;
                 const pendingCells = sortedCells.filter((cell) => cell.pending);
+                const observedScores = [];
+                for (const [rowIndex, cell] of sortedCells.entries()) {
+                  const parsedScore = parseVisibleScore(cell.score_text);
+                  if (parsedScore.awarded === null || parsedScore.possible === null) continue;
+                  const fallbackStudentRow = studentRows
+                    .map((row) => ({
+                      row,
+                      distance: Math.abs(row.center_y - ((cell.top + cell.bottom) / 2)),
+                    }))
+                    .sort((leftItem, rightItem) => leftItem.distance - rightItem.distance)[0]?.row;
+                  const matchedStudentRow = studentRows[rowIndex] || fallbackStudentRow || null;
+                  observedScores.push({
+                    selector_index: cell.selector_index,
+                    student_name: matchedStudentRow?.text || '',
+                    score_text: cell.score_text,
+                    score_awarded: parsedScore.awarded,
+                    score_possible: parsedScore.possible,
+                    reviewed: cell.reviewed,
+                    category_name: categoryName,
+                    exercise_label: label,
+                    exercise_number: exerciseNumber,
+                  });
+                }
                 return {
                   column_key: `exercise-column-${columnIndex}`,
                   column_index: columnIndex,
@@ -2704,6 +2796,7 @@ JSON schema instructions:
                   reviewed_cell_count: sortedCells.filter((cell) => cell.reviewed).length,
                   pending_cell_count: pendingCells.length,
                   first_pending_selector_index: pendingCells[0]?.selector_index ?? null,
+                  observed_scores: observedScores,
                 };
               });
 
@@ -2718,7 +2811,8 @@ JSON schema instructions:
                 unreviewed_cell_count: Math.max(cells.length - reviewedCount, 0),
                 fully_reviewed: cells.length > 0 && reviewedCount === cells.length,
                 pending_candidates: pendingCandidates,
-                exercise_columns: exerciseColumns,
+                observed_scores: exerciseColumns.flatMap((column) => column.observed_scores || []),
+                exercise_columns: exerciseColumns.map(({ observed_scores, ...column }) => column),
               };
             }
             """,

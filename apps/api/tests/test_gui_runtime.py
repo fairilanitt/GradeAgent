@@ -32,10 +32,14 @@ class FakePromptLibrary:
 
 
 class FakeStatisticsStore:
+    def __init__(self) -> None:
+        self.records: list[object] = []
+
     def load_runs(self) -> list[object]:
-        return []
+        return list(self.records)
 
     def append_run(self, record) -> None:
+        self.records.append(record)
         return None
 
 
@@ -158,3 +162,35 @@ def test_gui_runtime_grades_autopilot_queue_in_given_order() -> None:
     assert [item.column_key for item, _ in results] == ["exercise-2", "exercise-1"]
     assert [column_key for column_key, _ in service.captured_payloads] == ["exercise-2", "exercise-1"]
     assert summary == "Autopilot processed 2 queued exercise(s)."
+
+
+def test_gui_runtime_marks_interrupted_runs_in_statistics() -> None:
+    service = FakeBrowserNavigationService()
+    statistics_store = FakeStatisticsStore()
+    runtime = GuiRuntime(
+        service=service,
+        prompt_library=FakePromptLibrary(),
+        statistics_store=statistics_store,
+    )
+
+    try:
+        runtime._record_statistics_run(
+            result=ExamSessionGradingTaskResult(
+                job_id="job-stop",
+                status="needs_review",
+                summary="Stopped grading gracefully at the user's request.",
+            ),
+            overview_context=SanomaOverviewState(
+                assignment_title="RUB14.7 koe",
+                group_name="Katjas grupp RUB14.7",
+            ),
+            column_key="exercise-4",
+            prompt_id="prompt-1",
+            prompt_title="Latest prompt",
+            report_entries=[],
+        )
+    finally:
+        runtime.shutdown()
+
+    assert len(statistics_store.records) == 1
+    assert statistics_store.records[0].interrupted is True

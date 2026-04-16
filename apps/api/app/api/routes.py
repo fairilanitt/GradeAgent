@@ -29,6 +29,7 @@ from app.schemas.api import (
     GuiGradeExerciseRequest,
     GuiGradeExerciseResponse,
     GuiOverviewResponse,
+    GuiOverviewObservedScore,
     GuiPromptSaveRequest,
     GuiPromptTemplate,
     GuiStatisticsResponse,
@@ -96,6 +97,20 @@ def _build_gui_overview_response(overview_state) -> GuiOverviewResponse:
         students_answered_count=overview_state.students_answered_count,
         students_total_count=overview_state.students_total_count,
         exercises=[_map_gui_column(column) for column in pending_columns],
+        observed_scores=[
+            GuiOverviewObservedScore(
+                selector_index=item.selector_index,
+                student_name=item.student_name,
+                score_text=item.score_text,
+                score_awarded=item.score_awarded,
+                score_possible=item.score_possible,
+                reviewed=item.reviewed,
+                category_name=item.category_name,
+                exercise_label=item.exercise_label,
+                exercise_number=item.exercise_number,
+            )
+            for item in overview_state.observed_scores
+        ],
     )
 
 

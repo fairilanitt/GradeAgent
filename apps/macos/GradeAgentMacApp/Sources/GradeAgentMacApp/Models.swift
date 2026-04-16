@@ -80,6 +80,65 @@ struct GuiOverviewResponse: Codable {
     let studentsAnsweredCount: Int?
     let studentsTotalCount: Int?
     let exercises: [GuiExerciseColumn]
+    let observedScores: [GuiOverviewObservedScore]
+
+    private enum CodingKeys: String, CodingKey {
+        case assignmentTitle
+        case groupName
+        case studentsAnsweredCount
+        case studentsTotalCount
+        case exercises
+        case observedScores
+    }
+
+    init(
+        assignmentTitle: String,
+        groupName: String?,
+        studentsAnsweredCount: Int?,
+        studentsTotalCount: Int?,
+        exercises: [GuiExerciseColumn],
+        observedScores: [GuiOverviewObservedScore] = []
+    ) {
+        self.assignmentTitle = assignmentTitle
+        self.groupName = groupName
+        self.studentsAnsweredCount = studentsAnsweredCount
+        self.studentsTotalCount = studentsTotalCount
+        self.exercises = exercises
+        self.observedScores = observedScores
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        assignmentTitle = try container.decodeIfPresent(String.self, forKey: .assignmentTitle) ?? ""
+        groupName = try container.decodeIfPresent(String.self, forKey: .groupName)
+        studentsAnsweredCount = try container.decodeIfPresent(Int.self, forKey: .studentsAnsweredCount)
+        studentsTotalCount = try container.decodeIfPresent(Int.self, forKey: .studentsTotalCount)
+        exercises = try container.decodeIfPresent([GuiExerciseColumn].self, forKey: .exercises) ?? []
+        observedScores = try container.decodeIfPresent([GuiOverviewObservedScore].self, forKey: .observedScores) ?? []
+    }
+}
+
+struct GuiOverviewObservedScore: Codable, Identifiable, Hashable {
+    let selectorIndex: Int
+    let studentName: String
+    let scoreText: String
+    let scoreAwarded: Double?
+    let scorePossible: Double?
+    let reviewed: Bool
+    let categoryName: String?
+    let exerciseLabel: String?
+    let exerciseNumber: String?
+
+    var id: String {
+        [
+            "\(selectorIndex)",
+            studentName,
+            categoryName ?? "",
+            exerciseLabel ?? "",
+            exerciseNumber ?? "",
+            scoreText,
+        ].joined(separator: "|")
+    }
 }
 
 struct GuiGradeExerciseRequest: Codable {
@@ -293,6 +352,7 @@ struct GuiStatisticsRun: Codable, Identifiable, Hashable {
     let jobId: String
     let recordedAt: Date
     let status: String
+    let interrupted: Bool?
     let summary: String
     let assignmentTitle: String
     let groupName: String?

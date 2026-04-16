@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from app.prompt_library import PromptTemplate
 from app.schemas.api import ExamSessionGradingTaskResult
-from app.services.browser_navigation import SanomaOverviewExerciseColumn, SanomaOverviewState
+from app.services.browser_navigation import SanomaOverviewExerciseColumn, SanomaOverviewObservedScore, SanomaOverviewState
 
 
 def test_full_grading_review_release_flow(client) -> None:
@@ -343,6 +343,19 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
         group_name="Katjas grupp RUB14.7",
         students_answered_count=31,
         students_total_count=31,
+        observed_scores=[
+            SanomaOverviewObservedScore(
+                selector_index=7,
+                student_name="Aada Harri",
+                score_text="1 / 2",
+                score_awarded=1.0,
+                score_possible=2.0,
+                reviewed=True,
+                category_name="Text 4",
+                exercise_label="Text 4 · Tehtävä 4",
+                exercise_number="4",
+            )
+        ],
         exercise_columns=[
             SanomaOverviewExerciseColumn(
                 column_key="text-4-4",
@@ -521,6 +534,19 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
     assert len(payload["exercises"]) == 1
     assert payload["exercises"][0]["category_name"] == "Text 4"
     assert payload["exercises"][0]["exercise_number"] == "4"
+    assert payload["observed_scores"] == [
+        {
+            "selector_index": 7,
+            "student_name": "Aada Harri",
+            "score_text": "1 / 2",
+            "score_awarded": 1.0,
+            "score_possible": 2.0,
+            "reviewed": True,
+            "category_name": "Text 4",
+            "exercise_label": "Text 4 · Tehtävä 4",
+            "exercise_number": "4",
+        }
+    ]
 
     grade_response = client.post(
         "/api/gui/exercises/grade",

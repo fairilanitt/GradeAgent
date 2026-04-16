@@ -71,6 +71,8 @@ struct RootView: View {
                                 StatisticsPageView(compact: compactWindow)
                             case .lokit:
                                 LogsPageView(compact: compactWindow)
+                            case .asetukset:
+                                SettingsPageView(compact: compactWindow)
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -190,7 +192,10 @@ struct ControlPageView: View {
                                 ? (store.isAutoDetectingOverview ? "Automaattinen haku päällä" : "Odottaa yleisnäkymää")
                                 : "Selain ei ole auki"
                         )
-                        MiniInfoPill(label: "Tila", value: store.latestErrorMessage ?? store.resultMessage)
+                        MiniInfoPill(
+                            label: "Tila",
+                            value: store.latestErrorMessage.map(store.redactedTextForDisplay) ?? store.displayedResultMessage
+                        )
                     }
 
                     Divider()
@@ -377,7 +382,7 @@ struct AutopilotPageView: View {
                         label: "Tila",
                         value: store.autopilotRunning
                             ? "Autopilot arvioi nyt valittuja tehtäviä"
-                            : (store.latestErrorMessage ?? store.resultMessage)
+                            : (store.latestErrorMessage.map(store.redactedTextForDisplay) ?? store.displayedResultMessage)
                     )
                 }
 
