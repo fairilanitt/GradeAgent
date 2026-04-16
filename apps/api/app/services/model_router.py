@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from difflib import SequenceMatcher
 from typing import Any, Literal
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
@@ -338,7 +339,7 @@ JSON schema instructions:
         text = flatten_llm_content(response.content)
         try:
             return parser.parse(text)
-        except Exception:
+        except OutputParserException:
             return StructuredGradeResult.model_validate_json(extract_json_object(text))
 
 

@@ -1,3 +1,5 @@
+import pytest
+
 from app.prompt_library import PromptLibraryService
 
 
@@ -83,3 +85,13 @@ def test_prompt_library_can_override_default_prompt_without_hiding_it(tmp_path) 
     assert saved_prompt.model_provider == "vertex_ai"
     assert saved_prompt.model_name == "gemini-2.5-flash-lite"
     assert saved_prompt.reasoning_level == "low"
+
+
+def test_prompt_library_raises_for_invalid_json(tmp_path) -> None:
+    storage_path = tmp_path / "prompt-library.json"
+    storage_path.write_text("{", encoding="utf-8")
+
+    library = PromptLibraryService(storage_path=storage_path)
+
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        library.load_prompts()

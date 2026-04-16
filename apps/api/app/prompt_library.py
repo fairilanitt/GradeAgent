@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.services.llm_provider import (
     DEFAULT_VERTEX_AI_GRADING_MODEL,
@@ -101,14 +101,18 @@ class PromptLibraryService:
             return []
         try:
             payload = json.loads(self.storage_path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Prompt library file is not valid JSON: {self.storage_path}") from exc
+        if not isinstance(payload, list):
+            raise RuntimeError(f"Prompt library file must contain a list of prompts: {self.storage_path}")
         prompts: list[PromptTemplate] = []
-        for item in payload if isinstance(payload, list) else []:
+        for index, item in enumerate(payload):
             try:
                 prompt = PromptTemplate.model_validate(item)
-            except Exception:
-                continue
+            except ValidationError as exc:
+                raise RuntimeError(
+                    f"Prompt library file contains an invalid prompt entry at index {index}: {self.storage_path}"
+                ) from exc
             prompts.append(self._normalize_prompt(prompt))
         return prompts
 

@@ -1,2 +1,0 @@
-[console_scripts]
-gradeagent = app.cli:main

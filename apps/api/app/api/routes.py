@@ -37,6 +37,7 @@ from app.schemas.api import (
     QueueGradingTaskCreate,
     QueueGradingTaskResult,
     ReleaseResponse,
+    RubricValidationReport,
     RuntimeCounts,
     RuntimeOverview,
     ReviewDecisionCreate,
@@ -63,18 +64,6 @@ from app.services.workflow_dispatcher import WorkflowDispatcher
 
 router = APIRouter()
 settings = get_settings()
-
-
-def _map_gui_prompt(prompt) -> GuiPromptTemplate:
-    return GuiPromptTemplate(
-        prompt_id=prompt.prompt_id,
-        title=prompt.title,
-        body=prompt.body,
-        model_provider=prompt.model_provider,
-        model_name=prompt.model_name,
-        reasoning_level=prompt.reasoning_level,
-        built_in=prompt.built_in,
-    )
 
 
 def _map_gui_column(column) -> GuiExerciseColumn:
@@ -122,7 +111,7 @@ def healthcheck() -> dict[str, str]:
 @router.get("/gui/state", response_model=GuiStateResponse)
 def get_gui_state() -> GuiStateResponse:
     runtime = get_gui_runtime()
-    return GuiStateResponse.model_validate(runtime.state())
+    return runtime.state()
 
 
 @router.post("/gui/browser/start", response_model=GuiBrowserStartResponse)
@@ -130,7 +119,7 @@ def start_gui_browser() -> GuiBrowserStartResponse:
     runtime = get_gui_runtime()
     try:
         session_id = runtime.ensure_browser_started()
-    except Exception as exc:
+    except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return GuiBrowserStartResponse(session_id=session_id, browser_ready=True)
 
@@ -140,9 +129,9 @@ def stop_gui_browser() -> GuiStateResponse:
     runtime = get_gui_runtime()
     try:
         state = runtime.stop_browser()
-    except Exception as exc:
+    except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return GuiStateResponse.model_validate(state)
+    return state
 
 
 @router.get("/gui/overview", response_model=GuiOverviewResponse)
@@ -150,7 +139,7 @@ def get_gui_overview() -> GuiOverviewResponse:
     runtime = get_gui_runtime()
     try:
         overview_state = runtime.refresh_overview()
-    except Exception as exc:
+    except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _build_gui_overview_response(overview_state)
 
@@ -158,13 +147,13 @@ def get_gui_overview() -> GuiOverviewResponse:
 @router.get("/gui/prompts", response_model=list[GuiPromptTemplate])
 def list_gui_prompts() -> list[GuiPromptTemplate]:
     runtime = get_gui_runtime()
-    return [_map_gui_prompt(prompt) for prompt in runtime.prompt_templates()]
+    return runtime.prompt_templates()
 
 
 @router.post("/gui/prompts/new", response_model=GuiPromptTemplate, status_code=status.HTTP_201_CREATED)
 def create_gui_prompt() -> GuiPromptTemplate:
     runtime = get_gui_runtime()
-    return _map_gui_prompt(runtime.new_prompt_template())
+    return runtime.new_prompt_template()
 
 
 @router.post("/gui/prompts/save", response_model=GuiPromptTemplate)
@@ -179,9 +168,9 @@ def save_gui_prompt(payload: GuiPromptSaveRequest) -> GuiPromptTemplate:
             model_name=payload.model_name,
             reasoning_level=payload.reasoning_level,
         )
-    except ValueError as exc:
+    except (RuntimeError, ValueError, ProviderConfigurationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _map_gui_prompt(prompt)
+    return prompt
 
 
 @router.post("/gui/exercises/grade", response_model=GuiGradeExerciseResponse)
@@ -198,7 +187,7 @@ def grade_gui_exercise(payload: GuiGradeExerciseRequest) -> GuiGradeExerciseResp
             reasoning_level=payload.reasoning_level,
             max_steps=payload.max_steps,
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, ProviderConfigurationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return GuiGradeExerciseResponse(
         result=result,
@@ -215,7 +204,7 @@ def run_gui_autopilot(payload: GuiAutopilotRunRequest) -> GuiAutopilotRunRespons
     runtime = get_gui_runtime()
     try:
         item_results, overview_state, summary = runtime.grade_exercise_queue(items=payload.items)
-    except Exception as exc:
+    except (RuntimeError, ValueError, ProviderConfigurationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return GuiAutopilotRunResponse(
         summary=summary,
@@ -277,8 +266,8 @@ def create_rubric_profile(
         criteria_json=[item.model_dump(mode="json") for item in payload.criteria],
         preferences_json=payload.preferences.model_dump(mode="json"),
         exemplar_answers_json=[item.model_dump(mode="json") for item in payload.exemplar_answers],
-        status="active" if report["valid"] else "draft",
-        validation_report_json=report,
+        status="active" if report.valid else "draft",
+        validation_report_json=report.model_dump(mode="json"),
     )
     session.add(profile)
     session.commit()
@@ -352,8 +341,11 @@ def get_grade_run(grade_run_id: str, session: Session = Depends(get_session)) ->
     return grade_run
 
 
-@router.post("/rubric-profiles/{rubric_profile_id}/validate")
-def validate_rubric_profile(rubric_profile_id: str, session: Session = Depends(get_session)) -> dict:
+@router.post("/rubric-profiles/{rubric_profile_id}/validate", response_model=RubricValidationReport)
+def validate_rubric_profile(
+    rubric_profile_id: str,
+    session: Session = Depends(get_session),
+) -> RubricValidationReport:
     profile = session.get(RubricProfile, rubric_profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Rubric profile not found.")
@@ -367,7 +359,7 @@ def validate_rubric_profile(rubric_profile_id: str, session: Session = Depends(g
         exemplar_answers=profile.exemplar_answers_json,
     )
     report = RubricValidator().validate_profile(payload)
-    profile.validation_report_json = report
+    profile.validation_report_json = report.model_dump(mode="json")
     profile.updated_at = datetime.now(timezone.utc)
     session.add(profile)
     session.commit()

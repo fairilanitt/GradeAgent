@@ -852,36 +852,6 @@ struct LibraryPanelShell<Content: View>: View {
     }
 }
 
-struct PromptRowView: View {
-    let prompt: GuiPromptTemplate
-    let selected: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(prompt.title)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-
-                Text(prompt.builtIn ? "Oletuskriteeri" : "Mukautettu kriteeri")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(selected ? Color.white.opacity(0.18) : Color.white.opacity(0.07))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(selected ? 0.24 : 0.1), lineWidth: 1)
-        )
-    }
-}
-
 struct PromptBrowserListRow: View {
     let prompt: GuiPromptTemplate
 

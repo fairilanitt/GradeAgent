@@ -12,6 +12,7 @@ from app.schemas.api import (
     ExamSessionGradingTaskCreate,
     ExamSessionGradingTaskResult,
     GuiAutopilotQueueItemRequest,
+    GuiStateResponse,
     GuiStatisticsEntry,
     GuiStatisticsRun,
 )
@@ -73,14 +74,13 @@ class GuiRuntime:
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result()
 
-    def state(self) -> dict[str, object]:
+    def state(self) -> GuiStateResponse:
         self._clear_dead_browser_session_if_needed()
-        prompts = self.prompt_templates()
-        return {
-            "browser_ready": self.has_browser_session,
-            "session_id": self._session_id,
-            "prompt_count": len(prompts),
-        }
+        return GuiStateResponse(
+            browser_ready=self.has_browser_session,
+            session_id=self._session_id,
+            prompt_count=len(self.prompt_templates()),
+        )
 
     @property
     def grading_active(self) -> bool:
@@ -150,7 +150,7 @@ class GuiRuntime:
             self._last_overview_state = overview_state
             return overview_state
 
-    def stop_browser(self) -> dict[str, object]:
+    def stop_browser(self) -> GuiStateResponse:
         with self._lock:
             browser_session = self._browser_session
             session_id = self._session_id

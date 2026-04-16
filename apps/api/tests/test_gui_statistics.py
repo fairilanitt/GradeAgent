@@ -1,3 +1,5 @@
+import pytest
+
 from datetime import datetime, timezone
 
 from app.schemas.api import GuiStatisticsEntry, GuiStatisticsRun
@@ -78,3 +80,12 @@ def test_gui_statistics_store_reads_legacy_history_and_migrates_to_primary(tmp_p
 
     assert [run.run_id for run in loaded] == ["legacy-run"]
     assert primary_path.exists()
+
+
+def test_gui_statistics_store_raises_for_invalid_json(tmp_path) -> None:
+    storage_path = tmp_path / "grading-run-history.json"
+    storage_path.write_text("{", encoding="utf-8")
+    store = GuiStatisticsStore(storage_path)
+
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        store.load_runs()

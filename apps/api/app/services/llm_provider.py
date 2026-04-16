@@ -18,6 +18,7 @@ from langchain_ollama import ChatOllama as LangChainChatOllama
 from langchain_openai import ChatOpenAI
 
 from app.config import Settings
+from app.services.llm_json import extract_json_object, flatten_llm_content
 from app.services.ollama_browser_llm import EfficientBrowserUseChatOllama
 
 ProviderName = Literal["openai", "anthropic", "google", "vertex_ai", "ollama", "heuristic"]
@@ -662,35 +663,3 @@ def build_browser_use_llm(settings: Settings):
         api_key=require_provider_key(provider, settings, "browser automation"),
         temperature=0,
     )
-
-
-def flatten_llm_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        parts = [flatten_llm_content(item) for item in content]
-        return "\n".join(part for part in parts if part.strip())
-
-    if isinstance(content, dict):
-        if isinstance(content.get("text"), str):
-            return content["text"]
-        if isinstance(content.get("content"), str):
-            return content["content"]
-        return json.dumps(content, ensure_ascii=False)
-
-    return str(content)
-
-
-def extract_json_object(text: str) -> str:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if len(lines) >= 3:
-            stripped = "\n".join(lines[1:-1]).strip()
-
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise ProviderConfigurationError("Model response did not contain a JSON object.")
-    return stripped[start : end + 1]

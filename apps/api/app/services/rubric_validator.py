@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
-
-from app.schemas.api import CriterionDefinition, RubricProfileCreate, StructuredGradeResult
+from app.schemas.api import (
+    CriterionDefinition,
+    RubricProfileCreate,
+    RubricValidationReport,
+    StructuredGradeResult,
+)
 
 
 class RubricValidator:
-    def validate_profile(self, profile: RubricProfileCreate) -> dict[str, Any]:
+    def validate_profile(self, profile: RubricProfileCreate) -> RubricValidationReport:
         issues: list[str] = []
         warnings: list[str] = []
 
@@ -30,12 +33,12 @@ class RubricValidator:
         if profile.preferences.feedback_language not in {"sv", "fi", "en"}:
             warnings.append("Feedback language should normally be sv, fi, or en.")
 
-        return {
-            "valid": not issues,
-            "issues": issues,
-            "warnings": warnings,
-            "compiled_preferences": profile.preferences.model_dump(),
-        }
+        return RubricValidationReport(
+            valid=not issues,
+            issues=issues,
+            warnings=warnings,
+            compiled_preferences=profile.preferences,
+        )
 
     def validate_grade_result(
         self,

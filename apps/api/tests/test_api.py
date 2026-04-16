@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.prompt_library import PromptTemplate
-from app.schemas.api import ExamSessionGradingTaskResult
+from app.schemas.api import ExamSessionGradingTaskResult, GuiStateResponse
 from app.services.browser_navigation import SanomaOverviewExerciseColumn, SanomaOverviewObservedScore, SanomaOverviewState
 
 
@@ -393,8 +393,8 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
         def ensure_browser_started(self) -> str:
             return "session-456"
 
-        def stop_browser(self) -> dict[str, object]:
-            return {"browser_ready": False, "session_id": None, "prompt_count": 1}
+        def stop_browser(self) -> GuiStateResponse:
+            return GuiStateResponse(browser_ready=False, session_id=None, prompt_count=1)
 
         def refresh_overview(self) -> SanomaOverviewState:
             return overview_before

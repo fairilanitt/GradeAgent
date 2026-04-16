@@ -4,6 +4,8 @@ import json
 import threading
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from app.schemas.api import GuiStatisticsRun
 
 
@@ -54,14 +56,18 @@ class GuiStatisticsStore:
             return []
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Statistics history file is not valid JSON: {path}") from exc
+        if not isinstance(payload, list):
+            raise RuntimeError(f"Statistics history file must contain a list of runs: {path}")
         runs: list[GuiStatisticsRun] = []
-        for item in payload if isinstance(payload, list) else []:
+        for index, item in enumerate(payload):
             try:
                 runs.append(GuiStatisticsRun.model_validate(item))
-            except Exception:
-                continue
+            except ValidationError as exc:
+                raise RuntimeError(
+                    f"Statistics history file contains an invalid run at index {index}: {path}"
+                ) from exc
         return runs
 
     def _write_runs_unlocked(self, runs: list[GuiStatisticsRun]) -> None:

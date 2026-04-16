@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.prompt_library import PromptTemplate
+
 
 class CriterionDefinition(BaseModel):
     id: str
@@ -127,6 +129,13 @@ class ReviewDecisionCreate(BaseModel):
     overridden_result: StructuredGradeResult | None = None
 
 
+class RubricValidationReport(BaseModel):
+    valid: bool
+    issues: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    compiled_preferences: TeacherPreferenceConfig
+
+
 class ReleaseResponse(BaseModel):
     assessment_id: str
     released_count: int
@@ -210,14 +219,7 @@ class ExamSessionGradingTaskResult(BrowserTaskResult):
     report_path: str | None = None
 
 
-class GuiPromptTemplate(BaseModel):
-    prompt_id: str
-    title: str
-    body: str
-    model_provider: str = "vertex_ai"
-    model_name: str = "gemini-3.1-pro-preview"
-    reasoning_level: str = "medium"
-    built_in: bool = False
+GuiPromptTemplate = PromptTemplate
 
 
 class GuiPromptSaveRequest(BaseModel):
