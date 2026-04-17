@@ -208,6 +208,128 @@ struct GuiAutopilotRunResponse: Codable {
     let overview: GuiOverviewResponse
 }
 
+struct GuiGradebookQueryRequest: Codable {
+    let question: String
+}
+
+struct GuiGradebookExerciseScore: Decodable, Identifiable, Hashable {
+    let categoryName: String?
+    let exerciseLabel: String?
+    let exerciseNumber: String?
+    let scoreText: String
+    let scoreAwarded: Double?
+    let scorePossible: Double?
+    let reviewed: Bool
+
+    var id: String {
+        [
+            categoryName ?? "",
+            exerciseLabel ?? "",
+            exerciseNumber ?? "",
+            scoreText,
+        ].joined(separator: "|")
+    }
+}
+
+struct GuiGradebookExamResult: Decodable, Identifiable, Hashable {
+    let assignmentTitle: String
+    let assignmentDate: String
+    let seriesName: String?
+    let contentArea: String?
+    let groupName: String?
+    let statusText: String?
+    let matchedStudentName: String
+    let overviewURL: String
+    let totalScoreAwarded: Double?
+    let totalScorePossible: Double?
+    let reviewedScoreCount: Int
+    let exerciseScores: [GuiGradebookExerciseScore]
+
+    private enum CodingKeys: String, CodingKey {
+        case assignmentTitle
+        case assignmentDate
+        case seriesName
+        case contentArea
+        case groupName
+        case statusText
+        case matchedStudentName
+        case overviewUrl
+        case totalScoreAwarded
+        case totalScorePossible
+        case reviewedScoreCount
+        case exerciseScores
+    }
+
+    var id: String {
+        [assignmentDate, assignmentTitle, matchedStudentName].joined(separator: "|")
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        assignmentTitle = try container.decode(String.self, forKey: .assignmentTitle)
+        assignmentDate = try container.decode(String.self, forKey: .assignmentDate)
+        seriesName = try container.decodeIfPresent(String.self, forKey: .seriesName)
+        contentArea = try container.decodeIfPresent(String.self, forKey: .contentArea)
+        groupName = try container.decodeIfPresent(String.self, forKey: .groupName)
+        statusText = try container.decodeIfPresent(String.self, forKey: .statusText)
+        matchedStudentName = try container.decode(String.self, forKey: .matchedStudentName)
+        overviewURL = try container.decode(String.self, forKey: .overviewUrl)
+        totalScoreAwarded = try container.decodeIfPresent(Double.self, forKey: .totalScoreAwarded)
+        totalScorePossible = try container.decodeIfPresent(Double.self, forKey: .totalScorePossible)
+        reviewedScoreCount = try container.decodeIfPresent(Int.self, forKey: .reviewedScoreCount) ?? 0
+        exerciseScores = try container.decodeIfPresent([GuiGradebookExerciseScore].self, forKey: .exerciseScores) ?? []
+    }
+}
+
+struct GuiGradebookQueryResponse: Decodable {
+    let answerText: String
+    let parserMode: String
+    let modelProvider: String?
+    let modelName: String?
+    let examsScanned: Int
+    let examsMatched: Int
+    let findings: [GuiGradebookExamResult]
+}
+
+struct GuiGradebookChatMessage: Identifiable, Hashable {
+    enum Role: String, Hashable {
+        case user
+        case assistant
+    }
+
+    let id: UUID
+    let role: Role
+    let text: String
+    let timestamp: Date
+    let findings: [GuiGradebookExamResult]
+    let examsScanned: Int
+    let examsMatched: Int
+    let parserMode: String?
+    let modelLabel: String?
+
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        text: String,
+        timestamp: Date = Date(),
+        findings: [GuiGradebookExamResult] = [],
+        examsScanned: Int = 0,
+        examsMatched: Int = 0,
+        parserMode: String? = nil,
+        modelLabel: String? = nil
+    ) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.timestamp = timestamp
+        self.findings = findings
+        self.examsScanned = examsScanned
+        self.examsMatched = examsMatched
+        self.parserMode = parserMode
+        self.modelLabel = modelLabel
+    }
+}
+
 struct GuiStatisticsEntry: Codable, Identifiable, Hashable {
     let studentName: String
     let studentProgress: String?

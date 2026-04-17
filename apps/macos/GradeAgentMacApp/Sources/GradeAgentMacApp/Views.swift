@@ -5,9 +5,9 @@ struct LiquidGlassBackground: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(hex: "#D7DADF"),
-                    Color(hex: "#F1F3F5"),
-                    Color(hex: "#C9CED4"),
+                    Color(hex: "#B3B8BE"),
+                    Color(hex: "#D0D4D8"),
+                    Color(hex: "#8C939A"),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -15,19 +15,19 @@ struct LiquidGlassBackground: View {
             .ignoresSafeArea()
 
             Circle()
-                .fill(Color.white.opacity(0.18))
+                .fill(Color(hex: "#5E6670").opacity(0.22))
                 .frame(width: 460, height: 460)
                 .blur(radius: 80)
                 .offset(x: -260, y: -220)
 
             Circle()
-                .fill(Color(hex: "#BCC4CC").opacity(0.28))
+                .fill(Color(hex: "#414951").opacity(0.22))
                 .frame(width: 380, height: 380)
                 .blur(radius: 70)
                 .offset(x: 300, y: -180)
 
             Circle()
-                .fill(Color(hex: "#E5E8EC").opacity(0.34))
+                .fill(Color(hex: "#E0E4E7").opacity(0.24))
                 .frame(width: 460, height: 460)
                 .blur(radius: 90)
                 .offset(x: 260, y: 260)
@@ -40,9 +40,9 @@ struct HeroImageOverlayView: View {
         ZStack(alignment: .topTrailing) {
             LinearGradient(
                 colors: [
-                    Color(hex: "#6F7881").opacity(0.96),
-                    Color(hex: "#8A939C").opacity(0.90),
-                    Color(hex: "#B0B7BE").opacity(0.82),
+                    Color(hex: "#4E565F").opacity(0.96),
+                    Color(hex: "#707983").opacity(0.90),
+                    Color(hex: "#9FA7AF").opacity(0.82),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -110,17 +110,26 @@ struct GlassCard<Content: View>: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(Color.white.opacity(fillOpacity))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 34, style: .continuous))
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "#3A424A").opacity(max(fillOpacity * 2.2, 0.10)),
+                            Color(hex: "#97A0A9").opacity(max(fillOpacity * 0.85, 0.05)),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
 
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1.0)
 
             content
                 .padding(padding)
         }
-        .shadow(color: .black.opacity(0.14), radius: 24, x: 0, y: 18)
+        .shadow(color: .black.opacity(0.12), radius: 18, x: 0, y: 12)
     }
 }
 
@@ -162,16 +171,16 @@ struct LiquidGlassButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .bold, design: .rounded))
+            .font(.system(size: 12, weight: .bold, design: .rounded))
             .foregroundStyle(.white)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .background(
                 ZStack {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(tint.opacity(configuration.isPressed ? 0.78 : 0.94))
 
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [
@@ -183,7 +192,7 @@ struct LiquidGlassButtonStyle: ButtonStyle {
                             )
                         )
 
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(Color.white.opacity(0.26), lineWidth: 1)
                 }
             )
@@ -220,11 +229,20 @@ struct WorkspaceShell<Content: View>: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color.white.opacity(0.08))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "#525A63").opacity(0.20),
+                            Color(hex: "#A3AAB1").opacity(0.10),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
 
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color.white.opacity(0.11), lineWidth: 1)
 
             LinearGradient(
@@ -236,11 +254,22 @@ struct WorkspaceShell<Content: View>: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
             content
         }
-        .shadow(color: .black.opacity(0.10), radius: 18, x: 0, y: 12)
+        .shadow(color: .black.opacity(0.10), radius: 14, x: 0, y: 10)
+    }
+}
+
+struct IntegratedPageSurface<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
     }
 }
 
@@ -310,8 +339,8 @@ struct SidebarSectionTitle: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white.opacity(0.48))
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.42))
             .tracking(0.4)
     }
 }
@@ -326,28 +355,28 @@ struct SidebarButton: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 14, weight: selected ? .bold : .semibold))
-                    .frame(width: 20)
+                    .font(.system(size: 12, weight: selected ? .bold : .semibold))
+                    .frame(width: 18)
                 Text(title)
-                    .font(.system(size: 17, weight: selected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 14, weight: selected ? .bold : .medium, design: .rounded))
                 Spacer(minLength: 0)
 
                 if selected {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                 }
             }
             .foregroundStyle(.white.opacity(selected ? 0.98 : 0.90))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 11)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
             .background(
                 Group {
                     if selected {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.10))
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color(hex: "#5B646D").opacity(0.40))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
                             )
                     }
                 }
@@ -471,11 +500,11 @@ struct HeroStatPill: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .frame(minWidth: 118, alignment: .leading)
-        .background(Color.white.opacity(0.14))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color(hex: "#3F4750").opacity(0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 }
@@ -498,10 +527,10 @@ struct MiniInfoPill: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.black.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color(hex: "#2D343B").opacity(0.26))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
@@ -553,10 +582,10 @@ struct ExerciseInfoLine: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.black.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color(hex: "#2D343B").opacity(0.26))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
@@ -624,14 +653,14 @@ struct PromptLibraryBrowserView: View {
                 .background(
                     LinearGradient(
                         colors: [
-                            Color.black.opacity(0.06),
-                            Color.white.opacity(0.10),
+                            Color(hex: "#2B3138").opacity(0.24),
+                            Color(hex: "#707983").opacity(0.10),
                         ],
                         startPoint: .top,
                         endPoint: .bottom
-                    )
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .padding(.top, 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -791,9 +820,9 @@ struct PromptWorkspaceView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 12)
                             .background(Color.black.opacity(0.10))
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
                                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
                             )
                     }
@@ -857,9 +886,9 @@ struct PromptWorkspaceView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .background(Color.black.opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
 
@@ -888,9 +917,9 @@ struct PromptWorkspaceView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .background(Color.black.opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
 
@@ -924,9 +953,9 @@ struct PromptWorkspaceView: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black.opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
                 .foregroundStyle(.white.opacity(0.92))
@@ -947,9 +976,9 @@ struct LibraryPanelShell<Content: View>: View {
         Group {
             if integrated {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color(hex: "#353D45").opacity(0.22))
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(Color.white.opacity(0.06), lineWidth: 1)
                     content
                         .padding(18)
@@ -1008,9 +1037,12 @@ struct PromptTag: View {
             .foregroundStyle(.white.opacity(0.86))
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color.white.opacity(0.10))
-            .clipShape(Capsule())
-            .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
+            .background(Color(hex: "#424A53").opacity(0.26))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            )
     }
 }
 
@@ -1035,10 +1067,10 @@ struct WorkspaceCanvas<Content: View>: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.white.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color(hex: "#353D45").opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.white.opacity(0.05), lineWidth: 1)
         )
     }
@@ -1049,7 +1081,7 @@ struct SettingsPageView: View {
     let compact: Bool
 
     var body: some View {
-        GlassCard(fillOpacity: 0.09, strokeOpacity: 0.08) {
+        IntegratedPageSurface {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -1086,7 +1118,11 @@ struct SettingsSectionShell<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        GlassCard(padding: 22, fillOpacity: 0.07, strokeOpacity: 0.07) {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(hex: "#353D45").opacity(0.22))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
@@ -1100,6 +1136,7 @@ struct SettingsSectionShell<Content: View>: View {
                 content
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(22)
         }
     }
 }
@@ -1132,10 +1169,10 @@ struct SettingsToggleRow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color(hex: "#2D343B").opacity(0.28))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
@@ -1157,10 +1194,10 @@ struct WorkspaceStatCapsule: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.black.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color(hex: "#2D343B").opacity(0.28))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }

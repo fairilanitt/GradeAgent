@@ -21,6 +21,8 @@ from app.schemas.api import (
     BrowserTaskCreate,
     BrowserTaskResult,
     GuiAutopilotQueueItemResult,
+    GuiGradebookQueryRequest,
+    GuiGradebookQueryResponse,
     GuiAutopilotRunRequest,
     GuiAutopilotRunResponse,
     GradeRunCreate,
@@ -224,6 +226,15 @@ def run_gui_autopilot(payload: GuiAutopilotRunRequest) -> GuiAutopilotRunRespons
 def stop_gui_exercise_grading() -> None:
     runtime = get_gui_runtime()
     runtime.request_stop_grading()
+
+
+@router.post("/gui/gradebook/query", response_model=GuiGradebookQueryResponse)
+def query_gui_gradebook(payload: GuiGradebookQueryRequest) -> GuiGradebookQueryResponse:
+    runtime = get_gui_runtime()
+    try:
+        return runtime.answer_gradebook_query(question=payload.question)
+    except (RuntimeError, ValueError, ProviderConfigurationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/gui/statistics", response_model=GuiStatisticsResponse)

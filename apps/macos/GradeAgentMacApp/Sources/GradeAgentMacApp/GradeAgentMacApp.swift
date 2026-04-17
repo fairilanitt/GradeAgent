@@ -40,7 +40,7 @@ struct RootView: View {
             let windowWidth = proxy.size.width
             let heroHeight = min(210.0, max(138.0, proxy.size.height * 0.22))
             let compactWindow = windowWidth < 1180
-            let sidebarWidth = compactWindow ? 202.0 : 224.0
+            let sidebarWidth = compactWindow ? 178.0 : 192.0
 
             ZStack(alignment: .top) {
                 LiquidGlassBackground()
@@ -66,6 +66,8 @@ struct RootView: View {
                                     ControlPageView(compact: compactWindow)
                                 case .autopilot:
                                     AutopilotPageView(compact: compactWindow)
+                                case .arviointikirja:
+                                    GradebookPageView(compact: compactWindow)
                                 case .kriteerit:
                                     CriteriaPageView(compact: compactWindow)
                                 case .tilastot:
@@ -97,26 +99,26 @@ struct RootView: View {
 struct SidebarView: View {
     @EnvironmentObject private var store: GuiStore
     let compact: Bool
-    private let workspacePages: [AppPage] = [.ohjaus, .autopilot, .kriteerit]
+    private let workspacePages: [AppPage] = [.ohjaus, .autopilot, .arviointikirja, .kriteerit]
     private let insightPages: [AppPage] = [.tilastot, .lokit, .asetukset]
 
     var body: some View {
         SidebarPanel {
             VStack(alignment: .leading, spacing: compact ? 24 : 28) {
-                VStack(alignment: .leading, spacing: compact ? 14 : 18) {
-                    SidebarGlyph()
+                    VStack(alignment: .leading, spacing: compact ? 14 : 18) {
+                        SidebarGlyph()
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Arviointi")
-                            .font(.system(size: compact ? 28 : 32, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.96))
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Arviointi")
+                                .font(.system(size: compact ? 23 : 25, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.96))
 
-                        Text(store.browserReady ? "Selain on valmis ja tehtävät päivittyvät automaattisesti." : "Käynnistä selain ja siirry kokeen yleisnäkymään.")
-                            .font(.system(size: compact ? 12 : 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.62))
-                            .fixedSize(horizontal: false, vertical: true)
+                            Text(store.browserReady ? "Selain on valmis ja tehtävät päivittyvät automaattisesti." : "Käynnistä selain ja siirry kokeen yleisnäkymään.")
+                                .font(.system(size: compact ? 10 : 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.58))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                }
 
                 SidebarNavigationSection(title: "Työtila") {
                     VStack(alignment: .leading, spacing: compact ? 6 : 8) {
@@ -163,7 +165,7 @@ struct ControlPageView: View {
     let compact: Bool
 
     var body: some View {
-        GlassCard(fillOpacity: 0.09, strokeOpacity: 0.08) {
+        IntegratedPageSurface {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .firstTextBaseline) {
@@ -235,7 +237,6 @@ struct ControlPageView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -310,18 +311,18 @@ struct ExerciseCardView: View {
             .disabled(store.isGrading(exercise) || !store.hasPrompts)
         }
         .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(store.isSelected(exercise) ? Color.white.opacity(0.13) : Color.white.opacity(0.08))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(store.isSelected(exercise) ? Color(hex: "#4A535C").opacity(0.34) : Color(hex: "#2D343B").opacity(0.28))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(
-                    store.isSelected(exercise) ? Color.white.opacity(0.26) : Color.white.opacity(0.12),
+                    store.isSelected(exercise) ? Color.white.opacity(0.18) : Color.white.opacity(0.08),
                     lineWidth: store.isSelected(exercise) ? 1.3 : 1
                 )
         )
         .padding(18)
-        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onTapGesture {
             store.selectExercise(exercise)
         }
@@ -344,7 +345,7 @@ struct AutopilotPageView: View {
     let compact: Bool
 
     var body: some View {
-        GlassCard(fillOpacity: 0.09, strokeOpacity: 0.08) {
+        IntegratedPageSurface {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -406,7 +407,6 @@ struct AutopilotPageView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -510,12 +510,12 @@ private struct AutopilotSourceTile: View {
         }
         .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color.white.opacity(0.08))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(hex: "#2D343B").opacity(0.28))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 
@@ -600,7 +600,10 @@ private struct AutopilotQueuedTile: View {
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.white.opacity(0.16)))
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(hex: "#4A535C").opacity(0.40))
+                    )
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(exercise.title)
@@ -627,12 +630,16 @@ private struct AutopilotQueuedTile: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.white.opacity(store.draggedAutopilotColumnKey == exercise.columnKey ? 0.15 : 0.09))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(
+                    store.draggedAutopilotColumnKey == exercise.columnKey
+                        ? Color(hex: "#4A535C").opacity(0.38)
+                        : Color(hex: "#2D343B").opacity(0.28)
+                )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
         .onDrag {
             store.draggedAutopilotColumnKey = exercise.columnKey
@@ -649,7 +656,7 @@ struct CriteriaPageView: View {
     let compact: Bool
 
     var body: some View {
-        GlassCard(padding: compact ? 14 : 18, fillOpacity: 0.18, strokeOpacity: 0.08) {
+        IntegratedPageSurface {
             GeometryReader { proxy in
                 let libraryHeight = compact ? 300.0 : 320.0
                 let workspaceMinHeight = compact ? 900.0 : 760.0
@@ -669,6 +676,5 @@ struct CriteriaPageView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

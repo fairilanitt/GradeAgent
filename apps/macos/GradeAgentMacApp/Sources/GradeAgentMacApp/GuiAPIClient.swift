@@ -112,6 +112,10 @@ actor GuiAPIClient {
         try await post("gui/autopilot/run", body: request)
     }
 
+    func queryGradebook(_ request: GuiGradebookQueryRequest) async throws -> GuiGradebookQueryResponse {
+        try await post("gui/gradebook/query", body: request)
+    }
+
     func stopGrading() async throws {
         try await postNoContent("gui/exercises/stop", body: EmptyPayload())
     }

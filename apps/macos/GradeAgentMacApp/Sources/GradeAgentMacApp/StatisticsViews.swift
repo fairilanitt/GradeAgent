@@ -13,7 +13,7 @@ struct StatisticsPageView: View {
     @State private var selectedStudentSummaryID: StudentExamPerformanceSummary.ID?
 
     var body: some View {
-        GlassCard(fillOpacity: 0.09, strokeOpacity: 0.08) {
+        IntegratedPageSurface {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
@@ -596,11 +596,11 @@ struct StatisticsPageView: View {
             record.exerciseDisplay ?? "Muu tehtävä"
         }
         let palette = [
-            Color(hex: "#CAD2DA"),
-            Color(hex: "#AEB9C4"),
-            Color(hex: "#949FAA"),
-            Color(hex: "#7C8894"),
-            Color(hex: "#65727F"),
+            Color(hex: "#B9C0C7"),
+            Color(hex: "#969FA8"),
+            Color(hex: "#78828D"),
+            Color(hex: "#5F6974"),
+            Color(hex: "#464F58"),
         ]
         return grouped.keys.sorted().enumerated().map { index, key in
             StatisticsSlice(label: key, value: grouped[key]?.count ?? 0, color: palette[index % palette.count])
@@ -619,11 +619,11 @@ struct StatisticsPageView: View {
             record.exerciseDisplay ?? "Tuntematon tehtävä"
         }
         let palette = [
-            Color(hex: "#E5EBF0"),
-            Color(hex: "#CDD6DE"),
-            Color(hex: "#B3BEC8"),
-            Color(hex: "#98A5B1"),
-            Color(hex: "#7F8C99"),
+            Color(hex: "#D7DDE2"),
+            Color(hex: "#AEB7C0"),
+            Color(hex: "#8C96A1"),
+            Color(hex: "#6E7883"),
+            Color(hex: "#505A65"),
         ]
         return grouped.keys.sorted().enumerated().compactMap { index, key in
             let records = grouped[key] ?? []
@@ -845,7 +845,7 @@ struct LogsPageView: View {
     @State private var searchText = ""
 
     var body: some View {
-        GlassCard(fillOpacity: 0.09, strokeOpacity: 0.08) {
+        IntegratedPageSurface {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
@@ -1311,10 +1311,10 @@ private struct StatisticsCard<Content: View>: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .background(Color(hex: "#353D45").opacity(0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
@@ -1339,10 +1339,10 @@ private struct StatisticsMetricTile: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color(hex: "#353D45").opacity(0.20))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
@@ -1372,10 +1372,10 @@ private struct StatisticsGaugeTile: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color(hex: "#353D45").opacity(0.20))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
@@ -1414,10 +1414,10 @@ private struct StatisticsFilterPicker: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color(hex: "#313840").opacity(0.20))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
@@ -1439,10 +1439,10 @@ private struct StatisticsMetaPill: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.black.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color(hex: "#2D343B").opacity(0.28))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
@@ -1480,7 +1480,7 @@ private struct StatisticsAnnotationBubble: View {
         .foregroundStyle(.white)
         .padding(8)
         .background(Color.black.opacity(0.36))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -1693,10 +1693,10 @@ private struct LogEntryCard: View {
         }
         .tint(.white)
         .padding(16)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color(hex: "#353D45").opacity(0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }

@@ -463,6 +463,40 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
         def request_stop_grading(self) -> None:
             stop_grading_calls["count"] += 1
 
+        def answer_gradebook_query(self, *, question: str):
+            return {
+                "answer_text": "Löysin 2 koetta opiskelijalle Siiri Vehviläinen.",
+                "parser_mode": "heuristic",
+                "exams_scanned": 5,
+                "exams_matched": 2,
+                "findings": [
+                    {
+                        "assignment_title": "RUB14.7 Koe 1",
+                        "assignment_date": "15.4.2026",
+                        "series_name": "Effekt",
+                        "content_area": "Text 4",
+                        "group_name": "Katjas grupp RUB14.7",
+                        "status_text": "Arvioitavissa",
+                        "matched_student_name": "Siiri Vehviläinen",
+                        "overview_url": "https://arvi.sanomapro.fi/as/teacher/assignment/demo/review",
+                        "total_score_awarded": 18.0,
+                        "total_score_possible": 24.0,
+                        "reviewed_score_count": 12,
+                        "exercise_scores": [
+                            {
+                                "category_name": "Text 4",
+                                "exercise_label": "Text 4 / 4",
+                                "exercise_number": "4",
+                                "score_text": "1 / 2",
+                                "score_awarded": 1.0,
+                                "score_possible": 2.0,
+                                "reviewed": True,
+                            }
+                        ],
+                    }
+                ],
+            }
+
         def statistics(self):
             return [
                 {
@@ -628,6 +662,20 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
     stop_grading_response = client.post("/api/gui/exercises/stop")
     assert stop_grading_response.status_code == 204
     assert stop_grading_calls["count"] == 1
+
+    gradebook_response = client.post(
+        "/api/gui/gradebook/query",
+        json={
+            "question": "Kerro oppilaan Siiri Vehviläisen saamat arvosanat viimeisen 2 kuukauden ajalta."
+        },
+    )
+    gradebook_response.raise_for_status()
+    gradebook_payload = gradebook_response.json()
+    assert gradebook_payload["parser_mode"] == "heuristic"
+    assert gradebook_payload["exams_scanned"] == 5
+    assert gradebook_payload["exams_matched"] == 2
+    assert gradebook_payload["findings"][0]["matched_student_name"] == "Siiri Vehviläinen"
+    assert gradebook_payload["findings"][0]["exercise_scores"][0]["score_text"] == "1 / 2"
 
     shutdown_response = client.post("/api/gui/shutdown")
     assert shutdown_response.status_code == 204

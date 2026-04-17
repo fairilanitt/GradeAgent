@@ -12,6 +12,7 @@ from app.schemas.api import (
     ExamSessionGradingTaskCreate,
     ExamSessionGradingTaskResult,
     GuiAutopilotQueueItemRequest,
+    GuiGradebookQueryResponse,
     GuiStateResponse,
     GuiStatisticsEntry,
     GuiStatisticsRun,
@@ -55,6 +56,7 @@ class GuiRuntime:
         self._session_id: str | None = None
         self._last_overview_state: SanomaOverviewState | None = None
         self._active_grading_future: concurrent.futures.Future | None = None
+        self._active_gradebook_future: concurrent.futures.Future | None = None
         self._queue_stop_requested = False
         self._closed = False
 
@@ -86,6 +88,11 @@ class GuiRuntime:
     def grading_active(self) -> bool:
         with self._lock:
             return self._active_grading_future is not None and not self._active_grading_future.done()
+
+    @property
+    def gradebook_active(self) -> bool:
+        with self._lock:
+            return self._active_gradebook_future is not None and not self._active_gradebook_future.done()
 
     def prompt_templates(self) -> list[PromptTemplate]:
         return self.prompt_library.load_prompts()
@@ -170,6 +177,36 @@ class GuiRuntime:
 
     def statistics(self) -> list[GuiStatisticsRun]:
         return self.statistics_store.load_runs()
+
+    def answer_gradebook_query(self, *, question: str) -> GuiGradebookQueryResponse:
+        normalized_question = question.strip()
+        if not normalized_question:
+            raise RuntimeError("Kirjoita kysymys Arviointikirjaa varten ennen lähetystä.")
+
+        self._clear_dead_browser_session_if_needed()
+        with self._lock:
+            if self._browser_session is None:
+                raise RuntimeError("Käynnistä GradeAgent-selain ensin.")
+            if self._active_grading_future is not None and not self._active_grading_future.done():
+                raise RuntimeError("Arviointi on jo käynnissä. Pysäytä nykyinen ajo ennen Arviointikirjan kyselyä.")
+            if self._active_gradebook_future is not None and not self._active_gradebook_future.done():
+                raise RuntimeError("Arviointikirja käsittelee jo toista kyselyä.")
+
+            future = asyncio.run_coroutine_threadsafe(
+                self.service.answer_sanomapro_gradebook_query(
+                    browser_session=self._browser_session,
+                    question=normalized_question,
+                ),
+                self._loop,
+            )
+            self._active_gradebook_future = future
+
+        try:
+            return future.result()
+        finally:
+            with self._lock:
+                if self._active_gradebook_future is future:
+                    self._active_gradebook_future = None
 
     def _resolve_grading_request(
         self,
@@ -558,16 +595,20 @@ class GuiRuntime:
             browser_session = self._browser_session
             session_id = self._session_id
             active_future = self._active_grading_future
+            active_gradebook_future = self._active_gradebook_future
             self._browser_session = None
             self._session_id = None
             self._last_overview_state = None
             self._active_grading_future = None
+            self._active_gradebook_future = None
             self._closed = True
 
         try:
             self.service.request_stop_grading()
             if active_future is not None:
                 active_future.cancel()
+            if active_gradebook_future is not None:
+                active_gradebook_future.cancel()
             if browser_session is not None:
                 self._call(browser_session.kill())
         finally:

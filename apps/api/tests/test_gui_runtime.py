@@ -1,7 +1,7 @@
 from app.gui_runtime import GuiRuntime
 from app.prompt_library import PromptTemplate
 from app.schemas.api import GuiAutopilotQueueItemRequest
-from app.schemas.api import ExamSessionGradingTaskResult
+from app.schemas.api import ExamSessionGradingTaskResult, GuiGradebookQueryResponse
 from app.services.browser_navigation import SanomaOverviewExerciseColumn, SanomaOverviewState
 
 
@@ -46,6 +46,7 @@ class FakeStatisticsStore:
 class FakeBrowserNavigationService:
     def __init__(self) -> None:
         self.captured_payloads: list[tuple[str, object]] = []
+        self.gradebook_questions: list[str] = []
         self.overview_state = SanomaOverviewState()
 
     async def launch_interactive_browser(self, job_id: str):
@@ -70,6 +71,16 @@ class FakeBrowserNavigationService:
 
     async def inspect_sanomapro_overview_passively(self, browser_session) -> SanomaOverviewState:
         return self.overview_state
+
+    async def answer_sanomapro_gradebook_query(self, *, browser_session, question: str) -> GuiGradebookQueryResponse:
+        self.gradebook_questions.append(question)
+        return GuiGradebookQueryResponse(
+            answer_text="Löysin yhden kokeen.",
+            parser_mode="heuristic",
+            exams_scanned=3,
+            exams_matched=1,
+            findings=[],
+        )
 
     def consume_last_sanomapro_report_entries(self, job_id: str) -> list[object]:
         return []
@@ -194,3 +205,26 @@ def test_gui_runtime_marks_interrupted_runs_in_statistics() -> None:
 
     assert len(statistics_store.records) == 1
     assert statistics_store.records[0].interrupted is True
+
+
+def test_gui_runtime_answers_gradebook_queries_through_browser_service() -> None:
+    service = FakeBrowserNavigationService()
+    runtime = GuiRuntime(
+        service=service,
+        prompt_library=FakePromptLibrary(),
+        statistics_store=FakeStatisticsStore(),
+    )
+    runtime._browser_session = FakeBrowserSession()
+    runtime._session_id = "session-1"
+
+    try:
+        response = runtime.answer_gradebook_query(
+            question="Kerro oppilaan Siiri Vehviläisen saamat arvosanat viimeisen 2 kuukauden ajalta."
+        )
+    finally:
+        runtime.shutdown()
+
+    assert response.answer_text == "Löysin yhden kokeen."
+    assert service.gradebook_questions == [
+        "Kerro oppilaan Siiri Vehviläisen saamat arvosanat viimeisen 2 kuukauden ajalta."
+    ]

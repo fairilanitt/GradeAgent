@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import calendar
 import io
 import json
 import platform
@@ -10,6 +11,7 @@ import shutil
 import threading
 import tempfile
 import time
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
@@ -34,6 +36,9 @@ from app.schemas.api import (
     ExamSessionGradingAgentOutput,
     ExamSessionGradingTaskCreate,
     ExamSessionGradingTaskResult,
+    GuiGradebookExamResult,
+    GuiGradebookExerciseScore,
+    GuiGradebookQueryResponse,
     QueueGradingAgentOutput,
     QueueGradingTaskCreate,
     QueueGradingTaskResult,
@@ -110,6 +115,36 @@ class SanomaOverviewState(BaseModel):
     pending_candidates: list[SanomaOverviewCandidate] = Field(default_factory=list)
     exercise_columns: list[SanomaOverviewExerciseColumn] = Field(default_factory=list)
     observed_scores: list[SanomaOverviewObservedScore] = Field(default_factory=list)
+
+
+class SanomaAssignmentsListRow(BaseModel):
+    row_index: int = Field(default=0, ge=0)
+    date_text: str = ""
+    assignment_title: str = ""
+    series_name: str = ""
+    content_area: str = ""
+    group_name: str = ""
+    students_text: str = ""
+    status_text: str = ""
+
+
+class SanomaAssignmentsListState(BaseModel):
+    route: str = ""
+    visible_count: int = Field(default=0, ge=0)
+    total_count: int | None = None
+    rows: list[SanomaAssignmentsListRow] = Field(default_factory=list)
+
+
+class SanomaGradebookQuerySpec(BaseModel):
+    student_name: str | None = None
+    relative_months: int | None = None
+    relative_weeks: int | None = None
+    relative_days: int | None = None
+    assignment_title_keywords: list[str] = Field(default_factory=list)
+    wants_exam_totals: bool = True
+    wants_exercise_breakdown: bool = True
+    result_limit: int = Field(default=24, ge=1, le=60)
+    parser_mode: Literal["heuristic", "model"] = "heuristic"
 
 
 class SanomaExerciseScoreField(BaseModel):
@@ -1648,6 +1683,79 @@ Be conservative. If uncertain, do not choose exam_grading.
             )
         )
 
+    def _is_sanomapro_assignments_list_url(self, url: str | None) -> bool:
+        normalized_url = (url or "").strip().lower()
+        return "/as/teacher/assignments" in normalized_url
+
+    def _sanomapro_assignments_list_url(self) -> str:
+        return "https://arvi.sanomapro.fi/as/teacher/assignments"
+
+    def _normalize_person_text(self, value: str | None) -> str:
+        normalized = re.sub(r"\s+", " ", (value or "").strip())
+        return normalized.casefold()
+
+    def _search_tokens(self, value: str | None) -> list[str]:
+        return re.findall(r"[\wåäöÅÄÖ-]+", self._normalize_person_text(value), flags=re.UNICODE)
+
+    def _normalized_name_token_set(self, value: str | None) -> set[str]:
+        tokens: set[str] = set()
+        for token in self._search_tokens(value):
+            tokens.add(token)
+            if len(token) > 4 and token.endswith("n"):
+                tokens.add(token[:-1])
+        return tokens
+
+    def _student_name_match_score(self, query_name: str, candidate_name: str) -> int:
+        normalized_query = self._normalize_person_text(query_name)
+        normalized_candidate = self._normalize_person_text(candidate_name)
+        if not normalized_query or not normalized_candidate:
+            return 0
+        if normalized_query == normalized_candidate:
+            return 100
+        if normalized_query in normalized_candidate or normalized_candidate in normalized_query:
+            return 78
+
+        query_tokens = self._normalized_name_token_set(query_name)
+        candidate_tokens = self._normalized_name_token_set(candidate_name)
+        if not query_tokens or not candidate_tokens:
+            return 0
+        overlap = len(query_tokens & candidate_tokens)
+        if overlap == 0:
+            return 0
+        if query_tokens.issubset(candidate_tokens):
+            return 70 + min(overlap * 4, 12)
+        return 40 + min(overlap * 6, 18)
+
+    def _best_matching_student_name(self, query_name: str, candidates: set[str]) -> str | None:
+        best_name: str | None = None
+        best_score = 0
+        for candidate in candidates:
+            score = self._student_name_match_score(query_name, candidate)
+            if score > best_score:
+                best_name = candidate
+                best_score = score
+        return best_name if best_score >= 56 else None
+
+    def _parse_sanomapro_assignment_date(self, value: str) -> date | None:
+        normalized = re.sub(r"\s+", "", (value or "").strip())
+        if not normalized:
+            return None
+        for fmt in ("%d.%m.%Y", "%d.%m.%y"):
+            try:
+                return datetime.strptime(normalized, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _subtract_months(self, base_date: date, months: int) -> date:
+        year = base_date.year
+        month = base_date.month - months
+        while month <= 0:
+            month += 12
+            year -= 1
+        day = min(base_date.day, calendar.monthrange(year, month)[1])
+        return date(year, month, day)
+
     def _coerce_page_evaluate_result(self, raw_result):
         if isinstance(raw_result, (dict, list, int, float, bool)) or raw_result is None:
             return raw_result
@@ -2559,6 +2667,128 @@ JSON schema instructions:
             decision=self._parse_sanomapro_score_decision_text(repaired_text, parser, exercise_state),
         )
 
+    async def _extract_sanomapro_assignments_list_state(self, page) -> SanomaAssignmentsListState:
+        return await self._evaluate_page_json(
+            page,
+            """
+            () => {
+              const textOf = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+              const rows = Array.from(document.querySelectorAll('tr.result-table-row')).map((row, rowIndex) => {
+                const cellText = (index) => textOf(row.querySelector(`td:nth-child(${index})`)?.innerText || '');
+                return {
+                  row_index: rowIndex,
+                  date_text: cellText(1),
+                  assignment_title: cellText(2),
+                  series_name: cellText(3),
+                  content_area: cellText(4),
+                  group_name: cellText(5),
+                  students_text: cellText(6),
+                  status_text: cellText(7),
+                };
+              }).filter((row) => row.assignment_title);
+              const countText = textOf(document.querySelector('span.result.ng-binding')?.innerText || '');
+              const countMatch = countText.match(/\\/\\s*(\\d+)$/);
+              return {
+                route: location.pathname,
+                visible_count: rows.length,
+                total_count: countMatch ? Number.parseInt(countMatch[1], 10) : rows.length,
+                rows,
+              };
+            }
+            """,
+            SanomaAssignmentsListState,
+        )
+
+    async def inspect_sanomapro_assignments_list_passively(
+        self,
+        browser_session: BrowserSession,
+    ) -> SanomaAssignmentsListState:
+        assignments_url = self._sanomapro_assignments_list_url()
+        page = await browser_session.get_current_page()
+        current_url = None
+        if page is not None:
+            try:
+                current_url = await page.get_url()
+            except Exception:
+                current_url = None
+
+        if not current_url or not self._is_sanomapro_assignments_list_url(current_url):
+            candidates = await self._collect_tab_candidates(browser_session)
+            assignment_tabs = [tab for tab in candidates if self._is_sanomapro_assignments_list_url(tab.get("url"))]
+            if assignment_tabs:
+                indexed_candidates = list(enumerate(assignment_tabs))
+                selected_tab = max(
+                    indexed_candidates,
+                    key=lambda item: self._tab_selection_score(SimpleNamespace(**item[1]), item[0]),
+                )[1]
+                target_id = selected_tab.get("target_id", "")
+                if target_id and target_id != "current-page":
+                    await self._ensure_target_known_to_session(browser_session, target_id)
+                    await self._switch_to_target(browser_session, target_id)
+                page = await browser_session.get_current_page()
+                current_url = selected_tab.get("url")
+
+        if not current_url or not self._is_sanomapro_assignments_list_url(current_url):
+            await browser_session.navigate_to(assignments_url)
+            page = await browser_session.get_current_page()
+            current_url = assignments_url
+
+        if page is None:
+            raise RuntimeError("The managed browser did not expose the Sanoma Pro exams list page.")
+
+        await self._wait_for_page_ready_passively(page, current_url=current_url)
+        resolved_url = None
+        try:
+            resolved_url = await page.get_url()
+        except Exception:
+            resolved_url = current_url
+        if not self._is_sanomapro_assignments_list_url(resolved_url):
+            raise RuntimeError("Open the Sanoma Pro published exams list before querying Arviointikirja.")
+        return await self._extract_sanomapro_assignments_list_state(page)
+
+    async def _open_sanomapro_assignment_from_list(self, browser_session: BrowserSession, row_index: int) -> bool:
+        page = await browser_session.get_current_page()
+        if page is None:
+            return False
+
+        current_url = await page.get_url()
+        if not self._is_sanomapro_assignments_list_url(current_url):
+            return False
+
+        if not await self._click_page_selector(
+            page,
+            self._sanomapro_selector(current_url, "assignment_open_button"),
+            index=row_index,
+        ):
+            return False
+
+        deadline = time.monotonic() + 12.0
+        while time.monotonic() < deadline:
+            current_page = await browser_session.get_current_page()
+            if current_page is not None:
+                try:
+                    resolved_url = await current_page.get_url()
+                except Exception:
+                    resolved_url = None
+                if self._is_sanomapro_review_overview_url(resolved_url):
+                    await self._wait_for_page_ready_passively(current_page, current_url=resolved_url)
+                    return True
+            candidates = await self._collect_tab_candidates(browser_session)
+            overview_candidates = [tab for tab in candidates if self._is_sanomapro_review_overview_url(tab.get("url"))]
+            if overview_candidates:
+                target_id = overview_candidates[0].get("target_id", "")
+                if target_id and target_id != "current-page":
+                    await self._ensure_target_known_to_session(browser_session, target_id)
+                    await self._switch_to_target(browser_session, target_id)
+                    switched_page = await browser_session.get_current_page()
+                    if switched_page is not None:
+                        switched_url = await switched_page.get_url()
+                        if self._is_sanomapro_review_overview_url(switched_url):
+                            await self._wait_for_page_ready_passively(switched_page, current_url=switched_url)
+                            return True
+            await asyncio.sleep(0.35)
+        return False
+
     async def _extract_sanomapro_overview_state(self, page) -> SanomaOverviewState:
         state = await self._evaluate_page_json(
             page,
@@ -2881,6 +3111,312 @@ JSON schema instructions:
 
         await self._wait_for_page_ready_passively(page, current_url=current_url)
         return await self._extract_sanomapro_overview_state(page)
+
+    def _heuristic_gradebook_query_spec(self, question: str) -> SanomaGradebookQuerySpec | None:
+        normalized_question = re.sub(r"\s+", " ", question.strip())
+        if not normalized_question:
+            return None
+
+        spec = SanomaGradebookQuerySpec()
+        student_match = re.search(
+            r"oppilaa[nm]?\s+(.+?)(?=\s+(?:saamat|arvosanat|pisteet|viimeisen|viimeiset|kuluneen|kuluneet|ajalta)\b|[?.!,]|$)",
+            normalized_question,
+            flags=re.IGNORECASE,
+        )
+        if student_match:
+            spec.student_name = student_match.group(1).strip(" \"'”„")
+        else:
+            quoted_matches = [
+                match.strip()
+                for match in re.findall(r"[\"“](.+?)[\"”]", normalized_question)
+                if match.strip()
+            ]
+            if len(quoted_matches) == 1:
+                spec.student_name = quoted_matches[0]
+
+        months_match = re.search(r"(\d+)\s*(?:kk|kuukautta|kuukauden|kuukaus(?:ta|i|ien)?)", normalized_question, re.IGNORECASE)
+        weeks_match = re.search(r"(\d+)\s*(?:vk|viikkoa|viikon|viikkojen)", normalized_question, re.IGNORECASE)
+        days_match = re.search(r"(\d+)\s*(?:pv|päivää|päivän|päivien)", normalized_question, re.IGNORECASE)
+        if months_match:
+            spec.relative_months = max(1, int(months_match.group(1)))
+        if weeks_match:
+            spec.relative_weeks = max(1, int(weeks_match.group(1)))
+        if days_match:
+            spec.relative_days = max(1, int(days_match.group(1)))
+
+        if re.search(r"\b(erittely|tehtävittäin|tehtäväkohtaisesti)\b", normalized_question, re.IGNORECASE):
+            spec.wants_exercise_breakdown = True
+        if re.search(r"\b(yhteenveto|kokonaistulos|arvosanat)\b", normalized_question, re.IGNORECASE):
+            spec.wants_exam_totals = True
+
+        if spec.student_name:
+            return spec
+        return None
+
+    async def _model_gradebook_query_spec(self, question: str) -> SanomaGradebookQuerySpec:
+        parser = PydanticOutputParser(pydantic_object=SanomaGradebookQuerySpec)
+        provider, model_name = normalize_vertex_ai_grading_selection(
+            self.settings.sanomapro_exercise_grading_provider,
+            self.settings.sanomapro_exercise_grading_model,
+        )
+        model = build_explicit_grading_chat_model(
+            self.settings,
+            provider=provider,
+            model_name=model_name,
+            routing_tier="standard",
+            reasoning_level="medium",
+        )
+        response = await model.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "Parse a Finnish teacher question about Sanoma Pro grades into a compact JSON search specification. "
+                        "Return JSON only. Focus on student name, relative date range, and whether exam totals or task breakdowns are wanted."
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        f"Teacher question:\n{question.strip()}\n\n"
+                        f"JSON schema instructions:\n{parser.get_format_instructions()}"
+                    )
+                ),
+            ]
+        )
+        response_text = flatten_llm_content(response.content)
+        try:
+            parsed = parser.parse(response_text)
+        except Exception:
+            parsed = SanomaGradebookQuerySpec.model_validate_json(extract_json_object(response_text))
+        parsed.parser_mode = "model"
+        return parsed
+
+    async def _resolve_gradebook_query_spec(self, question: str) -> SanomaGradebookQuerySpec:
+        heuristic = self._heuristic_gradebook_query_spec(question)
+        if heuristic is not None:
+            return heuristic
+
+        try:
+            return await self._model_gradebook_query_spec(question)
+        except Exception:
+            return SanomaGradebookQuerySpec(parser_mode="heuristic")
+
+    def _gradebook_date_cutoff(self, spec: SanomaGradebookQuerySpec) -> date | None:
+        today = datetime.now(timezone.utc).date()
+        if spec.relative_days is not None:
+            return today - timedelta(days=spec.relative_days)
+        if spec.relative_weeks is not None:
+            return today - timedelta(weeks=spec.relative_weeks)
+        if spec.relative_months is not None:
+            return self._subtract_months(today, spec.relative_months)
+        return None
+
+    def _filter_gradebook_assignment_rows(
+        self,
+        rows: list[SanomaAssignmentsListRow],
+        spec: SanomaGradebookQuerySpec,
+    ) -> list[SanomaAssignmentsListRow]:
+        cutoff = self._gradebook_date_cutoff(spec)
+        filtered: list[SanomaAssignmentsListRow] = []
+        for row in rows:
+            if cutoff is not None:
+                parsed_date = self._parse_sanomapro_assignment_date(row.date_text)
+                if parsed_date is None or parsed_date < cutoff:
+                    continue
+            if spec.assignment_title_keywords:
+                haystack = self._normalize_person_text(f"{row.assignment_title} {row.content_area} {row.series_name}")
+                if not all(self._normalize_person_text(keyword) in haystack for keyword in spec.assignment_title_keywords):
+                    continue
+            filtered.append(row)
+        return filtered[: spec.result_limit]
+
+    def _build_gradebook_exam_result(
+        self,
+        *,
+        row: SanomaAssignmentsListRow,
+        overview_state: SanomaOverviewState,
+        matched_student_name: str,
+        overview_url: str,
+        student_scores: list[SanomaOverviewObservedScore],
+    ) -> GuiGradebookExamResult:
+        ordered_scores = sorted(
+            student_scores,
+            key=lambda item: (
+                (item.category_name or ""),
+                (item.exercise_number or ""),
+                item.selector_index,
+            ),
+        )
+        total_awarded = round(sum(item.score_awarded or 0 for item in ordered_scores), 2) if ordered_scores else None
+        total_possible = round(sum(item.score_possible or 0 for item in ordered_scores), 2) if ordered_scores else None
+        return GuiGradebookExamResult(
+            assignment_title=overview_state.assignment_title or row.assignment_title,
+            assignment_date=row.date_text,
+            series_name=row.series_name or None,
+            content_area=row.content_area or None,
+            group_name=overview_state.group_name or row.group_name or None,
+            status_text=row.status_text or None,
+            matched_student_name=matched_student_name,
+            overview_url=overview_url,
+            total_score_awarded=total_awarded,
+            total_score_possible=total_possible,
+            reviewed_score_count=len(ordered_scores),
+            exercise_scores=[
+                GuiGradebookExerciseScore(
+                    category_name=item.category_name,
+                    exercise_label=item.exercise_label,
+                    exercise_number=item.exercise_number,
+                    score_text=item.score_text,
+                    score_awarded=item.score_awarded,
+                    score_possible=item.score_possible,
+                    reviewed=item.reviewed,
+                )
+                for item in ordered_scores
+            ],
+        )
+
+    def _format_gradebook_answer(
+        self,
+        *,
+        question: str,
+        spec: SanomaGradebookQuerySpec,
+        findings: list[GuiGradebookExamResult],
+        exams_scanned: int,
+    ) -> str:
+        student_name = (spec.student_name or "").strip() or "the requested student"
+        if not student_name:
+            return (
+                "Arviointikirja needs the student's name in the question before it can gather exam results. "
+                "Example: Kerro oppilaan Etunimi Sukunimi saamat arvosanat viimeisen 2 kuukauden ajalta."
+            )
+
+        if not findings:
+            window_text = ""
+            if spec.relative_days is not None:
+                window_text = f" viimeisen {spec.relative_days} päivän ajalta"
+            elif spec.relative_weeks is not None:
+                window_text = f" viimeisen {spec.relative_weeks} viikon ajalta"
+            elif spec.relative_months is not None:
+                window_text = f" viimeisen {spec.relative_months} kuukauden ajalta"
+            return (
+                f"En löytänyt opiskelijalle {student_name} näkyviä arvioituja Sanoma Pro -koetuloksia{window_text}. "
+                f"Skannasin {exams_scanned} koetta julkaistujen kokeiden listalta."
+            )
+
+        lines = [
+            f"Löysin opiskelijalle {findings[0].matched_student_name} {len(findings)} koetta.",
+            f"Skannatut kokeet: {exams_scanned}",
+            "",
+        ]
+        for index, finding in enumerate(findings, start=1):
+            total_text = "-"
+            if finding.total_score_awarded is not None and finding.total_score_possible is not None:
+                total_text = (
+                    f"{self._format_score_value(finding.total_score_awarded)} / "
+                    f"{self._format_score_value(finding.total_score_possible)}"
+                )
+            lines.append(f"{index}. {finding.assignment_date or '-'} - {finding.assignment_title}")
+            lines.append(f"   Kokonaistulos: {total_text}")
+            if finding.group_name:
+                lines.append(f"   Ryhmä: {finding.group_name}")
+            if spec.wants_exercise_breakdown and finding.exercise_scores:
+                score_parts = []
+                for score in finding.exercise_scores:
+                    label = (
+                        f"{score.category_name} / {score.exercise_number}"
+                        if score.category_name and score.exercise_number
+                        else score.exercise_label or score.exercise_number or "Tehtävä"
+                    )
+                    score_parts.append(f"{label}: {score.score_text}")
+                lines.append(f"   Tehtävät: {'; '.join(score_parts)}")
+            lines.append(f"   Linkki: {finding.overview_url}")
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    async def answer_sanomapro_gradebook_query(
+        self,
+        *,
+        browser_session: BrowserSession,
+        question: str,
+    ) -> GuiGradebookQueryResponse:
+        spec = await self._resolve_gradebook_query_spec(question)
+        if not spec.student_name:
+            return GuiGradebookQueryResponse(
+                answer_text=(
+                    "Arviointikirja tarvitsee opiskelijan nimen kysymykseen ennen kuin se voi hakea arvosanat. "
+                    "Esimerkki: Kerro oppilaan Etunimi Sukunimi saamat arvosanat viimeisen 2 kuukauden ajalta."
+                ),
+                parser_mode=spec.parser_mode,
+                exams_scanned=0,
+                exams_matched=0,
+                findings=[],
+            )
+
+        assignments_state = await self.inspect_sanomapro_assignments_list_passively(browser_session)
+        candidate_rows = self._filter_gradebook_assignment_rows(assignments_state.rows, spec)
+        findings: list[GuiGradebookExamResult] = []
+        exams_scanned = 0
+        assignments_url = self._sanomapro_assignments_list_url()
+
+        for row in candidate_rows:
+            exams_scanned += 1
+            if not await self._open_sanomapro_assignment_from_list(browser_session, row.row_index):
+                await browser_session.navigate_to(assignments_url)
+                page = await browser_session.get_current_page()
+                if page is not None:
+                    await self._wait_for_page_ready_passively(page, current_url=assignments_url)
+                continue
+
+            current_page = await browser_session.get_current_page()
+            if current_page is None:
+                await browser_session.navigate_to(assignments_url)
+                continue
+
+            overview_url = await current_page.get_url()
+            overview_state = await self._extract_sanomapro_overview_state(current_page)
+            matched_student_name = self._best_matching_student_name(
+                spec.student_name,
+                {item.student_name for item in overview_state.observed_scores if item.student_name.strip()},
+            )
+            if matched_student_name:
+                student_scores = [
+                    item
+                    for item in overview_state.observed_scores
+                    if self._normalize_person_text(item.student_name) == self._normalize_person_text(matched_student_name)
+                ]
+                if student_scores:
+                    findings.append(
+                        self._build_gradebook_exam_result(
+                            row=row,
+                            overview_state=overview_state,
+                            matched_student_name=matched_student_name,
+                            overview_url=overview_url,
+                            student_scores=student_scores,
+                        )
+                    )
+
+            await browser_session.navigate_to(assignments_url)
+            page = await browser_session.get_current_page()
+            if page is not None:
+                await self._wait_for_page_ready_passively(page, current_url=assignments_url)
+
+        findings.sort(
+            key=lambda item: self._parse_sanomapro_assignment_date(item.assignment_date) or date.min,
+            reverse=True,
+        )
+        return GuiGradebookQueryResponse(
+            answer_text=self._format_gradebook_answer(
+                question=question,
+                spec=spec,
+                findings=findings,
+                exams_scanned=exams_scanned,
+            ),
+            parser_mode=spec.parser_mode,
+            model_provider=self.settings.sanomapro_exercise_grading_provider if spec.parser_mode == "model" else None,
+            model_name=self.settings.sanomapro_exercise_grading_model if spec.parser_mode == "model" else None,
+            exams_scanned=exams_scanned,
+            exams_matched=len(findings),
+            findings=findings,
+        )
 
     def _sanomapro_overview_column_by_key(
         self,

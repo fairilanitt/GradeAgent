@@ -318,6 +318,45 @@ class GuiAutopilotRunResponse(BaseModel):
     overview: GuiOverviewResponse = Field(default_factory=GuiOverviewResponse)
 
 
+class GuiGradebookQueryRequest(BaseModel):
+    question: str = Field(min_length=1)
+
+
+class GuiGradebookExerciseScore(BaseModel):
+    category_name: str | None = None
+    exercise_label: str | None = None
+    exercise_number: str | None = None
+    score_text: str = ""
+    score_awarded: float | None = None
+    score_possible: float | None = None
+    reviewed: bool = False
+
+
+class GuiGradebookExamResult(BaseModel):
+    assignment_title: str = ""
+    assignment_date: str = ""
+    series_name: str | None = None
+    content_area: str | None = None
+    group_name: str | None = None
+    status_text: str | None = None
+    matched_student_name: str = ""
+    overview_url: str = ""
+    total_score_awarded: float | None = None
+    total_score_possible: float | None = None
+    reviewed_score_count: int = 0
+    exercise_scores: list[GuiGradebookExerciseScore] = Field(default_factory=list)
+
+
+class GuiGradebookQueryResponse(BaseModel):
+    answer_text: str = ""
+    parser_mode: str = "heuristic"
+    model_provider: str | None = None
+    model_name: str | None = None
+    exams_scanned: int = 0
+    exams_matched: int = 0
+    findings: list[GuiGradebookExamResult] = Field(default_factory=list)
+
+
 class GuiStatisticsEntry(BaseModel):
     student_name: str = ""
     student_progress: str | None = None

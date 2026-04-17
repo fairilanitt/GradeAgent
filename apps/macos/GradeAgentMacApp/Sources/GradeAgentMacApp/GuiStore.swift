@@ -4,6 +4,7 @@ import SwiftUI
 enum AppPage: String, CaseIterable, Identifiable {
     case ohjaus
     case autopilot
+    case arviointikirja
     case kriteerit
     case tilastot
     case lokit
@@ -17,6 +18,8 @@ enum AppPage: String, CaseIterable, Identifiable {
             return "Ohjaus"
         case .autopilot:
             return "Autopilot"
+        case .arviointikirja:
+            return "Arviointikirja"
         case .kriteerit:
             return "Kriteerit"
         case .tilastot:
@@ -34,6 +37,8 @@ enum AppPage: String, CaseIterable, Identifiable {
             return "slider.horizontal.3"
         case .autopilot:
             return "list.number"
+        case .arviointikirja:
+            return "book.pages"
         case .kriteerit:
             return "books.vertical"
         case .tilastot:
@@ -62,6 +67,14 @@ final class GuiStore: ObservableObject {
     @Published var draggedAutopilotColumnKey: String?
     @Published var autopilotResults: [GuiAutopilotQueueItemResult] = []
     @Published var autopilotRunning = false
+    @Published var gradebookMessages: [GuiGradebookChatMessage] = [
+        GuiGradebookChatMessage(
+            role: .assistant,
+            text: "Kysy esimerkiksi: Kerro oppilaan Siiri Vehviläisen saamat arvosanat viimeisen 2 kuukauden ajalta."
+        )
+    ]
+    @Published var gradebookDraftQuestion = ""
+    @Published var gradebookRunning = false
     @Published var selectedLibraryPromptId: String?
     @Published var draftPromptId: String?
     @Published var draftPromptTitle = ""
@@ -173,6 +186,10 @@ final class GuiStore: ObservableObject {
         statisticsEntryCount
     }
 
+    var canSendGradebookQuestion: Bool {
+        browserReady && !gradebookRunning && !gradebookDraftQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     func loadInitialData() async {
         isLoadingInitialState = true
         defer { isLoadingInitialState = false }
@@ -279,6 +296,7 @@ final class GuiStore: ObservableObject {
             autopilotQueueColumnKeys = []
             autopilotResults = []
             isStopGradingRequested = false
+            gradebookRunning = false
             statusMessage = "Selain on auki. Siirry Sanoman kokeen yleisnäkymään, niin tehtävät ilmestyvät tähän automaattisesti."
             resultMessage = "Selaimen istunto on valmis: \(response.sessionId)"
             updateAutomaticOverviewDetection()
@@ -320,6 +338,7 @@ final class GuiStore: ObservableObject {
             autopilotRunning = false
             draggedAutopilotColumnKey = nil
             isStopGradingRequested = false
+            gradebookRunning = false
             isAutoDetectingOverview = false
             overviewAutoDetectionTask?.cancel()
             overviewAutoDetectionTask = nil
@@ -397,6 +416,76 @@ final class GuiStore: ObservableObject {
             latestErrorMessage = error.localizedDescription
             statusMessage = "Arvioinnin pysäytyspyyntö epäonnistui."
         }
+    }
+
+    func sendGradebookQuestion() async {
+        let question = gradebookDraftQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard browserReady else {
+            latestErrorMessage = "Käynnistä selain ennen Arviointikirjan käyttöä."
+            return
+        }
+        guard !question.isEmpty else { return }
+        guard !gradebookRunning else { return }
+        guard gradingColumnKey == nil, !autopilotRunning else {
+            latestErrorMessage = "Pysäytä käynnissä oleva arviointi ennen Arviointikirjan kyselyä."
+            return
+        }
+
+        latestErrorMessage = nil
+        gradebookRunning = true
+        gradebookDraftQuestion = ""
+        gradebookMessages.append(
+            GuiGradebookChatMessage(
+                role: .user,
+                text: question
+            )
+        )
+        statusMessage = "Arviointikirja käy julkaistuja kokeita läpi ja kokoaa vastauksen."
+        defer { gradebookRunning = false }
+
+        do {
+            let response = try await apiClient.queryGradebook(
+                GuiGradebookQueryRequest(question: question)
+            )
+            let modelLabel = [response.modelProvider, response.modelName]
+                .compactMap { value in
+                    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    return trimmed.isEmpty ? nil : trimmed
+                }
+                .joined(separator: " / ")
+            gradebookMessages.append(
+                GuiGradebookChatMessage(
+                    role: .assistant,
+                    text: response.answerText,
+                    findings: response.findings,
+                    examsScanned: response.examsScanned,
+                    examsMatched: response.examsMatched,
+                    parserMode: response.parserMode,
+                    modelLabel: modelLabel.isEmpty ? nil : modelLabel
+                )
+            )
+            statusMessage = "Arviointikirjan vastaus valmistui. Selain pysyy auki seuraavaa kyselyä varten."
+        } catch {
+            latestErrorMessage = error.localizedDescription
+            gradebookMessages.append(
+                GuiGradebookChatMessage(
+                    role: .assistant,
+                    text: "Arviointikirja ei saanut vastausta tällä kertaa: \(error.localizedDescription)"
+                )
+            )
+            statusMessage = "Arviointikirjan kysely epäonnistui."
+        }
+    }
+
+    func clearGradebookConversation() {
+        gradebookMessages = [
+            GuiGradebookChatMessage(
+                role: .assistant,
+                text: "Kysy esimerkiksi: Kerro oppilaan Siiri Vehviläisen saamat arvosanat viimeisen 2 kuukauden ajalta."
+            )
+        ]
+        gradebookDraftQuestion = ""
+        latestErrorMessage = nil
     }
 
     func enqueueAutopilotExercise(_ exercise: GuiExerciseColumn) {

@@ -112,6 +112,30 @@ def test_assignment_review_url_with_student_query_is_treated_as_exercise_route()
     assert service._is_sanomapro_review_overview_url(url) is False
 
 
+def test_gradebook_query_heuristic_extracts_student_and_month_window() -> None:
+    service = BrowserNavigationService(Settings())
+
+    spec = service._heuristic_gradebook_query_spec(
+        "Kerro oppilaan Siiri Vehviläisen saamat arvosanat viimeisen 2 kuukauden ajalta."
+    )
+
+    assert spec is not None
+    assert spec.student_name == "Siiri Vehviläisen"
+    assert spec.relative_months == 2
+    assert spec.parser_mode == "heuristic"
+
+
+def test_gradebook_query_best_student_match_prefers_exact_name() -> None:
+    service = BrowserNavigationService(Settings())
+
+    match = service._best_matching_student_name(
+        "Siiri Vehviläinen",
+        {"Siiri Vehviläinen", "Siiri Lehtinen", "Veeti Räikkönen"},
+    )
+
+    assert match == "Siiri Vehviläinen"
+
+
 class StubInteractivePage(StubPage):
     def __init__(self, url: str, title: str = "TEAS") -> None:
         super().__init__(url=url, title=title)
