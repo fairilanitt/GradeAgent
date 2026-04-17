@@ -13,6 +13,12 @@ def test_matching_sanomapro_page_profiles_returns_login_profile_for_auth_url() -
     assert [profile.key for profile in profiles] == ["sanomapro_login"]
 
 
+def test_matching_sanomapro_page_profiles_returns_assignments_profile_for_assignments_url() -> None:
+    profiles = matching_sanomapro_page_profiles("https://arvi.sanomapro.fi/as/teacher/assignments")
+
+    assert [profile.key for profile in profiles] == ["sanomapro_assignments_list"]
+
+
 def test_matching_sanomapro_page_profiles_returns_grading_workflow_for_review_overview() -> None:
     profiles = matching_sanomapro_page_profiles("https://arvi.sanomapro.fi/as/teacher/assignment/demo/review")
 
@@ -47,6 +53,17 @@ def test_render_sanomapro_hybrid_automation_context_includes_live_review_hooks()
     assert ".item-body.eb-question .eb-instruction-text, .item-body.ng-scope.eb-question .eb-instruction-text" in context
     assert ".answer-model .answer-container" in context
     assert "ul.assessment-progress-section-documents.clickable.small a[ng-click='ctrl.goToDocument(document)']" in context
+
+
+def test_render_sanomapro_hybrid_automation_context_includes_assignments_search_hooks() -> None:
+    context = render_sanomapro_hybrid_automation_context("https://arvi.sanomapro.fi/as/teacher/assignments")
+
+    assert "input.teas-text-input.search-input[ng-model='$ctrl.keyword'][placeholder='Hae tuloksia tai julkaistuja kokeita']" in context
+    assert "$ctrl.onKeywordChange()" in context
+    assert "Hae tuloksia tai julkaistuja kokeita" in context
+    assert "tr.result-table-row td:nth-child(2)" in context
+    assert "button.no-styles.view" in context
+    assert "Julkaistut kokeet 1-13 / 13" in context
 
 
 def test_build_exam_grading_task_includes_hybrid_automation_context_for_review_page() -> None:

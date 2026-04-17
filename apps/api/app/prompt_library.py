@@ -86,6 +86,23 @@ The answer shows minimal understanding. The student may have recognized a single
 The answer is completely incorrect, off-topic, or illegible. The student did not understand the audio.
 """.strip(),
     ),
+    PromptTemplate(
+        prompt_id="default-verbit-10p",
+        title="Verbit 10p.",
+        model_provider="vertex_ai",
+        model_name=DEFAULT_VERTEX_AI_GRADING_MODEL,
+        reasoning_level="medium",
+        built_in=True,
+        body="""
+Your task is to grade a student's answer. The task was: "(OBJECTIVE)". The list of verbs are "(TARGET)". Proceed to grade the answer: "(ANSWER)" X out of 10 points based on:
+
+1 point per successful verb objective completed (there are 10 numbered 1. 2. 3. etc.) (such as translation and/or conjugation).
+
+If they are not successfully completed in a verb objective, grade it 0.5 or 0 depending on: If there are some correct conjugations and the translation is almost or fully correct, give 0.5 points. If only the translation is correct, give 0.25. If some conjugations are correct give 0.25. If a verb objective does not have the correct translation and conjugations, give 0 points.
+
+Then add the points together to form the grade out of 10.
+""".strip(),
+    ),
 )
 
 

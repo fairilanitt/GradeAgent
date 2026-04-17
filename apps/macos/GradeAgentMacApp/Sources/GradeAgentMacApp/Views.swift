@@ -215,6 +215,107 @@ struct CircularActionButtonStyle: ButtonStyle {
     }
 }
 
+struct WorkspaceShell<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.white.opacity(0.11), lineWidth: 1)
+
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.10),
+                    Color.clear,
+                    Color.clear,
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+
+            content
+        }
+        .shadow(color: .black.opacity(0.10), radius: 18, x: 0, y: 12)
+    }
+}
+
+struct SidebarPanel<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .overlay(alignment: .trailing) {
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.02),
+                                Color.white.opacity(0.13),
+                                Color.white.opacity(0.02),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 1)
+                    .padding(.vertical, 14)
+            }
+    }
+}
+
+struct SidebarGlyph: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(Color.white.opacity(0.54), lineWidth: 1.6)
+                    .frame(width: 18, height: 18)
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(Color.white.opacity(0.32), lineWidth: 1.6)
+                    .frame(width: 18, height: 18)
+            }
+
+            VStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(Color.white.opacity(0.34), lineWidth: 1.6)
+                    .frame(width: 18, height: 18)
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(Color.white.opacity(0.54), lineWidth: 1.6)
+                    .frame(width: 18, height: 18)
+            }
+        }
+        .padding(.top, 4)
+    }
+}
+
+struct SidebarNavigationSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SidebarSectionTitle(title: title)
+            content
+        }
+    }
+}
+
+struct SidebarSectionTitle: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.48))
+            .tracking(0.4)
+    }
+}
+
 struct SidebarButton: View {
     let title: String
     let systemImage: String
@@ -225,21 +326,31 @@ struct SidebarButton: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 14, weight: selected ? .bold : .semibold))
+                    .frame(width: 20)
                 Text(title)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: selected ? .bold : .medium, design: .rounded))
                 Spacer(minLength: 0)
+
+                if selected {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                }
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .foregroundStyle(.white.opacity(selected ? 0.98 : 0.90))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 11)
             .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(selected ? Color.white.opacity(0.15) : Color.black.opacity(0.08))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.white.opacity(selected ? 0.16 : 0.07), lineWidth: 1)
+                Group {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                    }
+                }
             )
         }
         .buttonStyle(.plain)
@@ -945,62 +1056,20 @@ struct SettingsPageView: View {
                         Text("Asetukset")
                             .font(.system(size: 24, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
-                        Text("Hallitse käyttöliittymän näyttötapaa ja yksityisyyttä.")
+                        Text("Sovelluksen näkymä- ja yksityisyysasetukset.")
                             .font(.system(size: 13, weight: .medium, design: .rounded))
                             .foregroundStyle(.white.opacity(0.76))
                     }
 
-                    GlassCard(padding: compact ? 20 : 24, fillOpacity: 0.07, strokeOpacity: 0.07) {
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack(alignment: .center, spacing: 16) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Näytöstila")
-                                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                                        .foregroundStyle(.white)
-                                    Text("Piilota opiskelijoiden nimet koko käyttöliittymästä esimerkiksi esityksiä tai yhteistä tarkastelua varten.")
-                                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                                        .foregroundStyle(.white.opacity(0.76))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-
-                                Spacer(minLength: 0)
-
-                                Toggle(isOn: $store.hideStudentNamesInGui) {
-                                    EmptyView()
-                                }
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .tint(Color(hex: "#7F9889"))
-                            }
-
-                            AdaptiveAxisStack(horizontal: !compact, spacing: 10) {
-                                WorkspaceStatCapsule(label: "Tila", value: store.hideStudentNamesInGui ? "Päällä" : "Pois")
-                                WorkspaceStatCapsule(label: "Vaikutus", value: "Opiskelijanimet GUI:ssa")
-                            }
-
-                            WorkspaceCanvas(
-                                title: "Mitä tämä tekee",
-                                subtitle: "Muutos vaikuttaa heti kaikkiin käyttöliittymän opiskelijanimiin."
-                            ) {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Text(store.displayModeSummary)
-                                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                                        .foregroundStyle(.white.opacity(0.86))
-
-                                    Text("Tilastot-, Lokit- ja Ohjaus-näkymät näyttävät opiskelijat peitenimillä, kun asetus on käytössä.")
-                                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                                        .foregroundStyle(.white.opacity(0.68))
-
-                                    Text(verbatim: "Esimerkki: \"Siiri Vehviläinen\" -> \"" + store.visibleStudentName("Siiri Vehviläinen") + "\"")
-                                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                        .foregroundStyle(.white.opacity(0.84))
-                                        .textSelection(.enabled)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(minHeight: 190)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    SettingsSectionShell(
+                        title: "Yksityisyys",
+                        subtitle: "Käyttöliittymän tietosuojaan liittyvät asetukset."
+                    ) {
+                        SettingsToggleRow(
+                            title: "Näytöstila",
+                            subtitle: "Piilota opiskelijanimet käyttöliittymässä.",
+                            isOn: $store.hideStudentNamesInGui
+                        )
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1008,6 +1077,67 @@ struct SettingsPageView: View {
             }
             .scrollIndicators(.visible)
         }
+    }
+}
+
+struct SettingsSectionShell<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        GlassCard(padding: 22, fillOpacity: 0.07, strokeOpacity: 0.07) {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                }
+
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+struct SettingsToggleRow: View {
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                Text(subtitle)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.68))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            Toggle(isOn: $isOn) {
+                EmptyView()
+            }
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .tint(Color(hex: "#7F9889"))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        )
     }
 }
 

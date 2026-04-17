@@ -189,13 +189,10 @@ def grade_gui_exercise(payload: GuiGradeExerciseRequest) -> GuiGradeExerciseResp
         )
     except (RuntimeError, ValueError, ProviderConfigurationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    overview_response = _build_gui_overview_response(overview_state)
     return GuiGradeExerciseResponse(
         result=result,
-        exercises=[
-            _map_gui_column(column)
-            for column in overview_state.exercise_columns
-            if column.pending_cell_count > 0
-        ],
+        overview=overview_response,
     )
 
 
@@ -206,6 +203,7 @@ def run_gui_autopilot(payload: GuiAutopilotRunRequest) -> GuiAutopilotRunRespons
         item_results, overview_state, summary = runtime.grade_exercise_queue(items=payload.items)
     except (RuntimeError, ValueError, ProviderConfigurationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    overview_response = _build_gui_overview_response(overview_state)
     return GuiAutopilotRunResponse(
         summary=summary,
         items=[
@@ -218,11 +216,7 @@ def run_gui_autopilot(payload: GuiAutopilotRunRequest) -> GuiAutopilotRunRespons
             )
             for item, result in item_results
         ],
-        exercises=[
-            _map_gui_column(column)
-            for column in overview_state.exercise_columns
-            if column.pending_cell_count > 0
-        ],
+        overview=overview_response,
     )
 
 

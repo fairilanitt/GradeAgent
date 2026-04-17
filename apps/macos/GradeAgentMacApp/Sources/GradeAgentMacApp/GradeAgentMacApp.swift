@@ -40,7 +40,7 @@ struct RootView: View {
             let windowWidth = proxy.size.width
             let heroHeight = min(210.0, max(138.0, proxy.size.height * 0.22))
             let compactWindow = windowWidth < 1180
-            let sidebarWidth = compactWindow ? 176.0 : 196.0
+            let sidebarWidth = compactWindow ? 202.0 : 224.0
 
             ZStack(alignment: .top) {
                 LiquidGlassBackground()
@@ -50,37 +50,41 @@ struct RootView: View {
                     .frame(maxWidth: .infinity)
                     .ignoresSafeArea(edges: .top)
 
-                HStack(alignment: .top, spacing: compactWindow ? 14 : 20) {
-                    SidebarView(compact: compactWindow)
-                        .frame(width: sidebarWidth)
-                        .frame(maxHeight: .infinity)
+                WorkspaceShell {
+                    HStack(alignment: .top, spacing: compactWindow ? 14 : 20) {
+                        SidebarView(compact: compactWindow)
+                            .frame(width: sidebarWidth)
+                            .frame(maxHeight: .infinity)
 
-                    VStack(alignment: .leading, spacing: compactWindow ? 14 : 18) {
-                        if store.selectedPage == .ohjaus {
-                            HeroDashboardView(compact: compactWindow)
-                        }
-                        Group {
-                            switch store.selectedPage {
-                            case .ohjaus:
-                                ControlPageView(compact: compactWindow)
-                            case .autopilot:
-                                AutopilotPageView(compact: compactWindow)
-                            case .kriteerit:
-                                CriteriaPageView(compact: compactWindow)
-                            case .tilastot:
-                                StatisticsPageView(compact: compactWindow)
-                            case .lokit:
-                                LogsPageView(compact: compactWindow)
-                            case .asetukset:
-                                SettingsPageView(compact: compactWindow)
+                        VStack(alignment: .leading, spacing: compactWindow ? 14 : 18) {
+                            if store.selectedPage == .ohjaus {
+                                HeroDashboardView(compact: compactWindow)
                             }
+                            Group {
+                                switch store.selectedPage {
+                                case .ohjaus:
+                                    ControlPageView(compact: compactWindow)
+                                case .autopilot:
+                                    AutopilotPageView(compact: compactWindow)
+                                case .kriteerit:
+                                    CriteriaPageView(compact: compactWindow)
+                                case .tilastot:
+                                    StatisticsPageView(compact: compactWindow)
+                                case .lokit:
+                                    LogsPageView(compact: compactWindow)
+                                case .asetukset:
+                                    SettingsPageView(compact: compactWindow)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.top, store.selectedPage == .ohjaus ? 6 : 0)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
-                    .padding(.top, store.selectedPage == .ohjaus ? 6 : 0)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, compactWindow ? 14 : 18)
+                    .padding(.vertical, compactWindow ? 14 : 18)
                 }
-                .padding(.leading, compactWindow ? 8 : 12)
+                .padding(.leading, compactWindow ? 2 : 6)
                 .padding(.trailing, compactWindow ? 16 : 24)
                 .padding(.bottom, compactWindow ? 16 : 24)
                 .padding(.top, compactWindow ? 6 : 8)
@@ -93,60 +97,62 @@ struct RootView: View {
 struct SidebarView: View {
     @EnvironmentObject private var store: GuiStore
     let compact: Bool
+    private let workspacePages: [AppPage] = [.ohjaus, .autopilot, .kriteerit]
+    private let insightPages: [AppPage] = [.tilastot, .lokit, .asetukset]
 
     var body: some View {
-        GlassCard(padding: compact ? 12 : 14, fillOpacity: 0.10, strokeOpacity: 0.08) {
-            VStack(alignment: .leading, spacing: compact ? 10 : 12) {
-                VStack(alignment: .leading, spacing: compact ? 8 : 10) {
-                    ForEach(AppPage.allCases) { page in
-                        SidebarButton(
-                            title: page.title,
-                            systemImage: page.systemImage,
-                            selected: store.selectedPage == page
-                        ) {
-                            store.selectedPage = page
+        SidebarPanel {
+            VStack(alignment: .leading, spacing: compact ? 24 : 28) {
+                VStack(alignment: .leading, spacing: compact ? 14 : 18) {
+                    SidebarGlyph()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Arviointi")
+                            .font(.system(size: compact ? 28 : 32, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+
+                        Text(store.browserReady ? "Selain on valmis ja tehtävät päivittyvät automaattisesti." : "Käynnistä selain ja siirry kokeen yleisnäkymään.")
+                            .font(.system(size: compact ? 12 : 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                SidebarNavigationSection(title: "Työtila") {
+                    VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+                        ForEach(workspacePages) { page in
+                            SidebarButton(
+                                title: page.title,
+                                systemImage: page.systemImage,
+                                selected: store.selectedPage == page
+                            ) {
+                                store.selectedPage = page
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+                    .overlay(Color.white.opacity(0.14))
+
+                SidebarNavigationSection(title: "Seuranta") {
+                    VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+                        ForEach(insightPages) { page in
+                            SidebarButton(
+                                title: page.title,
+                                systemImage: page.systemImage,
+                                selected: store.selectedPage == page
+                            ) {
+                                store.selectedPage = page
+                            }
                         }
                     }
                 }
 
                 Spacer(minLength: 0)
-
-                VStack(alignment: .leading, spacing: compact ? 10 : 12) {
-                    if let sessionId = store.sessionId, store.browserReady {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Selainistunto")
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.62))
-                            Text(sessionId)
-                                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.72))
-                                .textSelection(.enabled)
-                        }
-                    }
-
-                    if store.hasPrompts {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Kriteerit")
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.62))
-                            Text("\(store.prompts.count) kriteeriä käytettävissä")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.76))
-                        }
-                    }
-
-                    if store.statisticsRunCount > 0 {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Tilastot")
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.62))
-                            Text("\(store.statisticsRunCount) arviointia tallennettu")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.76))
-                        }
-                    }
-                }
             }
+            .padding(.horizontal, compact ? 16 : 20)
+            .padding(.vertical, compact ? 18 : 22)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }

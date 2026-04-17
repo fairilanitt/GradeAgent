@@ -367,14 +367,7 @@ final class GuiStore: ObservableObject {
                     maxSteps: 260
                 )
             )
-            overview = GuiOverviewResponse(
-                assignmentTitle: overview?.assignmentTitle ?? "",
-                groupName: overview?.groupName,
-                studentsAnsweredCount: overview?.studentsAnsweredCount,
-                studentsTotalCount: overview?.studentsTotalCount,
-                exercises: response.exercises,
-                observedScores: overview?.observedScores ?? []
-            )
+            overview = response.overview
             syncExercisePromptSelections()
             syncAutopilotQueueWithOverview()
             selectedExerciseColumnKey = nil
@@ -476,14 +469,7 @@ final class GuiStore: ObservableObject {
         do {
             let response = try await apiClient.runAutopilot(GuiAutopilotRunRequest(items: items))
             autopilotResults = response.items
-            overview = GuiOverviewResponse(
-                assignmentTitle: overview?.assignmentTitle ?? "",
-                groupName: overview?.groupName,
-                studentsAnsweredCount: overview?.studentsAnsweredCount,
-                studentsTotalCount: overview?.studentsTotalCount,
-                exercises: response.exercises,
-                observedScores: overview?.observedScores ?? []
-            )
+            overview = response.overview
             syncExercisePromptSelections()
             syncAutopilotQueueWithOverview()
             await refreshStatistics()

@@ -39,6 +39,24 @@ def test_prompt_library_includes_default_two_point_listening_comprehension_promp
     assert default_prompt.reasoning_level == "medium"
 
 
+def test_prompt_library_includes_default_verb_prompt(tmp_path) -> None:
+    library = PromptLibraryService(storage_path=tmp_path / "prompt-library.json")
+
+    prompts = library.load_prompts()
+
+    default_prompt = next(prompt for prompt in prompts if prompt.prompt_id == "default-verbit-10p")
+    assert default_prompt.title == "Verbit 10p."
+    assert "(OBJECTIVE)" in default_prompt.body
+    assert "(TARGET)" in default_prompt.body
+    assert "(ANSWER)" in default_prompt.body
+    assert "1 point per successful verb objective completed" in default_prompt.body
+    assert "0.25" in default_prompt.body
+    assert "grade out of 10" in default_prompt.body
+    assert default_prompt.model_provider == "vertex_ai"
+    assert default_prompt.model_name == "gemini-3.1-pro-preview"
+    assert default_prompt.reasoning_level == "medium"
+
+
 def test_prompt_library_can_save_custom_prompt(tmp_path) -> None:
     library = PromptLibraryService(storage_path=tmp_path / "prompt-library.json")
     prompt = library.new_custom_prompt().model_copy(

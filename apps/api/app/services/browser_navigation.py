@@ -1630,11 +1630,23 @@ Be conservative. If uncertain, do not choose exam_grading.
 
     def _is_sanomapro_review_overview_url(self, url: str | None) -> bool:
         normalized_url = (url or "").strip().lower()
-        return "/as/teacher/assignment/" in normalized_url and "/review" in normalized_url
+        return (
+            "/as/teacher/assignment/" in normalized_url
+            and "/review" in normalized_url
+            and "studentid=" not in normalized_url
+            and "/exercise" not in normalized_url
+        )
 
     def _is_sanomapro_review_exercise_url(self, url: str | None) -> bool:
         normalized_url = (url or "").strip().lower()
-        return "/as/teacher/review/" in normalized_url and "/exercise" in normalized_url
+        return (
+            ("/as/teacher/review/" in normalized_url and "/exercise" in normalized_url)
+            or (
+                "/as/teacher/assignment/" in normalized_url
+                and "/review" in normalized_url
+                and "studentid=" in normalized_url
+            )
+        )
 
     def _coerce_page_evaluate_result(self, raw_result):
         if isinstance(raw_result, (dict, list, int, float, bool)) or raw_result is None:
@@ -4105,6 +4117,16 @@ JSON schema instructions:
                                         f"Stopped grading {selected_column_label or 'the selected exercise'} "
                                         "gracefully at the user's request."
                                     )
+                                    if self._is_sanomapro_review_exercise_url(current_url):
+                                        await self._set_browser_status_overlay(
+                                            page,
+                                            mode="running",
+                                            headline="Returning to overview",
+                                            detail="Stopping gracefully and returning to the overview before updating statistics.",
+                                            meta={"Exercise": selected_column_label or "-"},
+                                        )
+                                        if await self._exit_sanomapro_exercise_to_overview(page, current_url):
+                                            current_url = await self.get_current_page_url(browser_session) or current_url
                                     steps.append(
                                         {
                                             "name": "graceful_stop",
@@ -4294,6 +4316,19 @@ JSON schema instructions:
                                         f"({exercise_state.student_progress or '-'}) in "
                                         f"{selected_column_label or self._sanomapro_compact_exercise_label(exercise_state)}."
                                     )
+                                    if exercise_state.exit_available:
+                                        await self._set_browser_status_overlay(
+                                            page,
+                                            mode="running",
+                                            headline="Returning to overview",
+                                            detail="Stopping gracefully and returning to the overview before updating statistics.",
+                                            meta={
+                                                "Student": exercise_state.student_progress or "-",
+                                                "Exercise": selected_column_label or self._sanomapro_compact_exercise_label(exercise_state),
+                                            },
+                                        )
+                                        if await self._exit_sanomapro_exercise_to_overview(page, current_url):
+                                            current_url = await self.get_current_page_url(browser_session) or current_url
                                     steps.append(
                                         {
                                             "name": "graceful_stop",

@@ -121,6 +121,164 @@ SANOMAPRO_LOGIN_PROFILE = HybridAutomationPageProfile(
 )
 
 
+SANOMAPRO_ASSIGNMENTS_LIST_PROFILE = HybridAutomationPageProfile(
+    key="sanomapro_assignments_list",
+    description="Sanoma Pro TEAS published exams list",
+    url_patterns=(
+        r"arvi\.sanomapro\.fi/as/teacher/assignments(?:\?.*)?$",
+    ),
+    selectors=(
+        HybridAutomationSelector(
+            "assignments_heading",
+            "h1",
+            "Main page heading for the published exams list.",
+        ),
+        HybridAutomationSelector(
+            "assignments_search_box",
+            "div.search-box.with-filters",
+            "Top search area that contains the published-exams search input and filter controls.",
+        ),
+        HybridAutomationSelector(
+            "assignments_search_input",
+            "input.teas-text-input.search-input[ng-model='$ctrl.keyword'][placeholder='Hae tuloksia tai julkaistuja kokeita']",
+            "Published-exams search bar at the top of the list page.",
+        ),
+        HybridAutomationSelector(
+            "quick_filter_button",
+            "button.quick-filter--button",
+            "Quick-filter buttons such as 'Suoritetut ja päättyneet' and 'Alkaneet ja tulevat'.",
+        ),
+        HybridAutomationSelector(
+            "show_filters_button",
+            "button#btn-show-filters.btn-show-filters",
+            "Button that opens the full assignments filter panel.",
+        ),
+        HybridAutomationSelector(
+            "assignments_table",
+            "table",
+            "Main published exams results table.",
+        ),
+        HybridAutomationSelector(
+            "assignments_header_cell",
+            "table th",
+            "Header cells for Pvm., Kokeen nimi, Sarja, Sisältöalue, Ryhmät, Suorituksia, and Tila.",
+        ),
+        HybridAutomationSelector(
+            "assignments_count_summary",
+            "span.result.ng-binding",
+            "Bottom summary text like 'Julkaistut kokeet 1-13 / 13'.",
+        ),
+        HybridAutomationSelector(
+            "assignment_row",
+            "tr.result-table-row",
+            "Visible exam rows inside the published exams table body.",
+        ),
+        HybridAutomationSelector(
+            "assignment_date_cell",
+            "tr.result-table-row td:nth-child(1)",
+            "Exam date column (Pvm.).",
+        ),
+        HybridAutomationSelector(
+            "assignment_name_cell",
+            "tr.result-table-row td:nth-child(2)",
+            "Exam name column (Kokeen nimi).",
+        ),
+        HybridAutomationSelector(
+            "assignment_series_cell",
+            "tr.result-table-row td.method-col, tr.result-table-row td:nth-child(3)",
+            "Study material series column (Sarja).",
+        ),
+        HybridAutomationSelector(
+            "assignment_content_cell",
+            "tr.result-table-row td.course-col, tr.result-table-row td:nth-child(4)",
+            "Content area column (Sisältöalue).",
+        ),
+        HybridAutomationSelector(
+            "assignment_group_cell",
+            "tr.result-table-row td:nth-child(5)",
+            "Student group column (Ryhmät).",
+        ),
+        HybridAutomationSelector(
+            "assignment_students_cell",
+            "tr.result-table-row td:nth-child(6)",
+            "Students/submissions column (Suorituksia).",
+        ),
+        HybridAutomationSelector(
+            "assignment_status_cell",
+            "tr.result-table-row td:nth-child(7)",
+            "Status column (Tila).",
+        ),
+        HybridAutomationSelector(
+            "assignment_status_badge",
+            "tr.result-table-row td:nth-child(7) .assignment-status",
+            "Rendered status badge inside the status column.",
+        ),
+        HybridAutomationSelector(
+            "assignment_open_button",
+            "tr.result-table-row td:nth-child(8) button.no-styles.view",
+            "Open button at the far right of each exam row.",
+        ),
+    ),
+    dom_signals=(
+        HybridAutomationDomSignal(
+            "search_keyword_model",
+            "$ctrl.keyword",
+            "Angular model behind the top published-exams search field.",
+        ),
+        HybridAutomationDomSignal(
+            "search_keyword_change",
+            "$ctrl.onKeywordChange()",
+            "Angular change handler fired when the search field value changes.",
+        ),
+        HybridAutomationDomSignal(
+            "show_filters_toggle",
+            "result-filters-toggle",
+            "Directive attached to the 'Suodata näkymää' button.",
+        ),
+        HybridAutomationDomSignal(
+            "assignment_row_repeat",
+            "row in $ctrl.data",
+            "Angular repeater that renders each visible exam row.",
+        ),
+        HybridAutomationDomSignal(
+            "assignment_row_click",
+            "$ctrl.onRowClick(row)",
+            "Angular click handler for opening a selected exam row.",
+        ),
+        HybridAutomationDomSignal(
+            "assignment_column_click",
+            "$ctrl.onColumnClick($event, row, column)",
+            "Angular click handler attached to each exam row cell.",
+        ),
+        HybridAutomationDomSignal(
+            "assignment_header_sort",
+            "$ctrl.onTableHeaderCellClick(column)",
+            "Angular click handler used by sortable table headers.",
+        ),
+    ),
+    text_markers=(
+        "Julkaistut kokeet",
+        "Hae tuloksia tai julkaistuja kokeita",
+        "Suodata näkymää",
+        "Pvm.",
+        "Kokeen nimi",
+        "Sarja",
+        "Sisältöalue",
+        "Ryhmät",
+        "Suorituksia",
+        "Tila",
+        "Avaa",
+    ),
+    notes=(
+        "Selectors were captured from the live TEAS published-exams page on 2026-04-16.",
+        "The search input lives inside 'div.search-box.with-filters > div.search > div.wrapper'.",
+        "The spyglass visible on the right side of the search bar did not appear as a standalone DOM element in the live page snapshot, which suggests it is rendered via CSS or a pseudo-element.",
+        "The current live page was filtered down to 13 visible exams, with the footer summary reading 'Julkaistut kokeet 1-13 / 13'.",
+        "Each visible exam row is rendered as 'tr.result-table-row' with eight columns, and the rightmost action is a button.no-styles.view labeled 'Avaa'.",
+    ),
+)
+
+
 SANOMAPRO_REVIEW_OVERVIEW_PROFILE = HybridAutomationPageProfile(
     key="sanomapro_review_overview",
     description="Sanoma Pro TEAS assignment review matrix",
@@ -476,6 +634,7 @@ def matching_sanomapro_page_profiles(url: str | None) -> tuple[HybridAutomationP
         profile
         for profile in (
             SANOMAPRO_LOGIN_PROFILE,
+            SANOMAPRO_ASSIGNMENTS_LIST_PROFILE,
             SANOMAPRO_REVIEW_OVERVIEW_PROFILE,
             SANOMAPRO_REVIEW_EXERCISE_PROFILE,
         )

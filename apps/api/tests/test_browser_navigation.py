@@ -104,6 +104,14 @@ class StubElement:
         self.filled_values.append(value)
 
 
+def test_assignment_review_url_with_student_query_is_treated_as_exercise_route() -> None:
+    service = BrowserNavigationService(Settings())
+    url = "https://arvi.sanomapro.fi/as/teacher/assignment/demo-assignment/review?studentId=abc123"
+
+    assert service._is_sanomapro_review_exercise_url(url) is True
+    assert service._is_sanomapro_review_overview_url(url) is False
+
+
 class StubInteractivePage(StubPage):
     def __init__(self, url: str, title: str = "TEAS") -> None:
         super().__init__(url=url, title=title)

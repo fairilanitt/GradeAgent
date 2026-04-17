@@ -563,7 +563,8 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
     )
     grade_response.raise_for_status()
     assert grade_response.json()["result"]["summary"] == "Tehtävä arvioitiin onnistuneesti."
-    assert grade_response.json()["exercises"] == []
+    assert grade_response.json()["overview"]["assignment_title"] == "RUB14.7 koe"
+    assert grade_response.json()["overview"]["exercises"] == []
     assert grade_calls == [
         (
             "text-4-4",
@@ -597,6 +598,8 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
     autopilot_response.raise_for_status()
     assert autopilot_response.json()["summary"] == "Autopilot processed 1 queued exercise(s)."
     assert autopilot_response.json()["items"][0]["result"]["summary"] == "Autopilot arvioi tehtävän onnistuneesti."
+    assert autopilot_response.json()["overview"]["assignment_title"] == "RUB14.7 koe"
+    assert autopilot_response.json()["overview"]["exercises"] == []
     assert autopilot_calls == [
         [
             {

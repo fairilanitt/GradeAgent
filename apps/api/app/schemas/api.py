@@ -286,7 +286,7 @@ class GuiGradeExerciseRequest(BaseModel):
 
 class GuiGradeExerciseResponse(BaseModel):
     result: ExamSessionGradingTaskResult
-    exercises: list[GuiExerciseColumn] = Field(default_factory=list)
+    overview: GuiOverviewResponse = Field(default_factory=GuiOverviewResponse)
 
 
 class GuiAutopilotQueueItemRequest(BaseModel):
@@ -315,7 +315,7 @@ class GuiAutopilotRunRequest(BaseModel):
 class GuiAutopilotRunResponse(BaseModel):
     summary: str = ""
     items: list[GuiAutopilotQueueItemResult] = Field(default_factory=list)
-    exercises: list[GuiExerciseColumn] = Field(default_factory=list)
+    overview: GuiOverviewResponse = Field(default_factory=GuiOverviewResponse)
 
 
 class GuiStatisticsEntry(BaseModel):

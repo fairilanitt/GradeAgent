@@ -172,7 +172,7 @@ struct ExamSessionGradingTaskResult: Codable {
 
 struct GuiGradeExerciseResponse: Codable {
     let result: ExamSessionGradingTaskResult
-    let exercises: [GuiExerciseColumn]
+    let overview: GuiOverviewResponse
 }
 
 struct GuiAutopilotQueueItemRequest: Codable, Identifiable, Hashable {
@@ -205,7 +205,7 @@ struct GuiAutopilotRunRequest: Codable {
 struct GuiAutopilotRunResponse: Codable {
     let summary: String
     let items: [GuiAutopilotQueueItemResult]
-    let exercises: [GuiExerciseColumn]
+    let overview: GuiOverviewResponse
 }
 
 struct GuiStatisticsEntry: Codable, Identifiable, Hashable {
