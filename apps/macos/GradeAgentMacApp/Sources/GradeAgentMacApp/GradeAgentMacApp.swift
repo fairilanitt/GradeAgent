@@ -38,17 +38,11 @@ struct RootView: View {
     var body: some View {
         GeometryReader { proxy in
             let windowWidth = proxy.size.width
-            let heroHeight = min(210.0, max(138.0, proxy.size.height * 0.22))
             let compactWindow = windowWidth < 1180
-            let sidebarWidth = compactWindow ? 178.0 : 192.0
+            let sidebarWidth = compactWindow ? 180.0 : 196.0
 
             ZStack(alignment: .top) {
                 LiquidGlassBackground()
-
-                HeroImageOverlayView()
-                    .frame(height: heroHeight)
-                    .frame(maxWidth: .infinity)
-                    .ignoresSafeArea(edges: .top)
 
                 WorkspaceShell {
                     HStack(alignment: .top, spacing: compactWindow ? 14 : 20) {
@@ -111,11 +105,11 @@ struct SidebarView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Arviointi")
                                 .font(.system(size: compact ? 23 : 25, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.96))
+                                .foregroundStyle(Theme.ink)
 
                             Text(store.browserReady ? "Selain on valmis ja tehtävät päivittyvät automaattisesti." : "Käynnistä selain ja siirry kokeen yleisnäkymään.")
                                 .font(.system(size: compact ? 10 : 11, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.58))
+                                .foregroundStyle(Theme.inkMuted)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -135,7 +129,7 @@ struct SidebarView: View {
                 }
 
                 Divider()
-                    .overlay(Color.white.opacity(0.14))
+                    .overlay(Theme.hairlineSoft)
 
                 SidebarNavigationSection(title: "Seuranta") {
                     VStack(alignment: .leading, spacing: compact ? 6 : 8) {
@@ -172,16 +166,16 @@ struct ControlPageView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Havaitut tehtävät")
                                 .font(.system(size: 20, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.ink)
                             Text("Tämä alareunan työtila näkyy vain Ohjaus-sivulla. Täältä valitaan löydetyt tehtäväsarjat arviointiin.")
                                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.76))
+                                .foregroundStyle(Theme.inkMuted)
                         }
                         Spacer(minLength: 0)
                         if let exerciseCount = store.overview?.exercises.count {
                             Text("\(exerciseCount) tehtävää")
                                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.74))
+                                .foregroundStyle(Theme.inkMuted)
                         }
                     }
 
@@ -207,7 +201,7 @@ struct ControlPageView: View {
                     }
 
                     Divider()
-                        .overlay(Color.white.opacity(0.14))
+                        .overlay(Theme.hairlineSoft)
                 }
 
                 if let exercises = store.overview?.exercises, !exercises.isEmpty {
@@ -250,7 +244,7 @@ struct ExerciseCardView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(exercise.title)
                         .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.ink)
                         .lineLimit(2)
 
                     if let categoryName = exercise.categoryName {
@@ -271,8 +265,9 @@ struct ExerciseCardView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Kriteeri")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Theme.inkSoft)
+                    .tracking(0.8)
 
                 Picker("Valittu kriteeri", selection: bindingForPromptSelection) {
                     ForEach(store.prompts) { prompt in
@@ -281,11 +276,11 @@ struct ExerciseCardView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .tint(.white)
+                .tint(Theme.ink)
 
                 Text(store.selectedPrompt(for: exercise)?.title ?? "Valitse kriteeri")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.74))
+                    .foregroundStyle(Theme.inkMuted)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -307,22 +302,23 @@ struct ExerciseCardView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#6F937C")))
+            .buttonStyle(LiquidGlassButtonStyle(tint: Theme.accent))
             .disabled(store.isGrading(exercise) || !store.hasPrompts)
         }
+        .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(store.isSelected(exercise) ? Color(hex: "#4A535C").opacity(0.34) : Color(hex: "#2D343B").opacity(0.28))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.surface)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(
-                    store.isSelected(exercise) ? Color.white.opacity(0.18) : Color.white.opacity(0.08),
-                    lineWidth: store.isSelected(exercise) ? 1.3 : 1
+                    store.isSelected(exercise) ? Theme.accent.opacity(0.55) : Theme.hairline,
+                    lineWidth: store.isSelected(exercise) ? 1.6 : 1
                 )
         )
-        .padding(18)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: Theme.shadow.opacity(0.55), radius: 8, x: 0, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture {
             store.selectExercise(exercise)
         }
@@ -351,10 +347,10 @@ struct AutopilotPageView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Autopilot")
                             .font(.system(size: 22, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.ink)
                         Text("Rakenna tehtäväjono havaituista tehtävistä. Autopilot suorittaa ne tässä järjestyksessä yksi kerrallaan.")
                             .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.76))
+                            .foregroundStyle(Theme.inkMuted)
                     }
 
                     Spacer(minLength: 0)
@@ -366,7 +362,7 @@ struct AutopilotPageView: View {
                             } label: {
                                 Label("Pysäytä", systemImage: "stop.fill")
                             }
-                            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#8C7C78")))
+                            .buttonStyle(LiquidGlassButtonStyle(tint: Theme.warning))
                         }
 
                         Button {
@@ -377,7 +373,7 @@ struct AutopilotPageView: View {
                                 systemImage: store.autopilotRunning ? "hourglass" : "play.fill"
                             )
                         }
-                        .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#6F937C")))
+                        .buttonStyle(LiquidGlassButtonStyle(tint: Theme.accent))
                         .disabled(store.autopilotRunning || store.autopilotQueueExercises.isEmpty || !store.hasPrompts)
                     }
                 }
@@ -394,7 +390,7 @@ struct AutopilotPageView: View {
                 }
 
                 Divider()
-                    .overlay(Color.white.opacity(0.14))
+                    .overlay(Theme.hairlineSoft)
 
                 AdaptiveAxisStack(horizontal: !compact, spacing: 18) {
                     AutopilotAvailableExercisesPane(compact: compact)
@@ -419,11 +415,11 @@ private struct AutopilotAvailableExercisesPane: View {
             HStack {
                 Text("Havaitut tehtävät")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.ink)
                 Spacer(minLength: 0)
                 Text("Lisää jonoon yhdellä klikkauksella")
                     .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.68))
+                    .foregroundStyle(Theme.inkMuted)
             }
 
             if store.availableAutopilotExercises.isEmpty {
@@ -464,7 +460,7 @@ private struct AutopilotSourceTile: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(exercise.title)
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.ink)
                         .lineLimit(2)
                     if let categoryName = exercise.categoryName {
                         PromptTag(title: categoryName)
@@ -480,8 +476,9 @@ private struct AutopilotSourceTile: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Kriteeri")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Theme.inkSoft)
+                    .tracking(0.8)
                 Picker("Valittu kriteeri", selection: bindingForPromptSelection) {
                     ForEach(store.prompts) { prompt in
                         Text(prompt.title).tag(prompt.promptId)
@@ -489,11 +486,11 @@ private struct AutopilotSourceTile: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .tint(.white)
+                .tint(Theme.ink)
 
                 Text(store.selectedPrompt(for: exercise)?.title ?? "Valitse kriteeri")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.74))
+                    .foregroundStyle(Theme.inkMuted)
                     .lineLimit(2)
             }
 
@@ -505,18 +502,19 @@ private struct AutopilotSourceTile: View {
                 Label("Lisää jonoon", systemImage: "plus")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#7E8A93")))
+            .buttonStyle(LiquidGlassButtonStyle(tint: Theme.neutral))
             .disabled(!store.hasPrompts)
         }
         .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(hex: "#2D343B").opacity(0.28))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.surface)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 1)
         )
+        .shadow(color: Theme.shadow.opacity(0.55), radius: 8, x: 0, y: 3)
     }
 
     private var bindingForPromptSelection: Binding<String> {
@@ -540,11 +538,11 @@ private struct AutopilotQueuePane: View {
             HStack {
                 Text("Suoritusjärjestys")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.ink)
                 Spacer(minLength: 0)
                 Text("\(store.autopilotQueueExercises.count) tehtävää")
                     .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.68))
+                    .foregroundStyle(Theme.inkMuted)
             }
 
             if store.autopilotQueueExercises.isEmpty {
@@ -598,21 +596,21 @@ private struct AutopilotQueuedTile: View {
             HStack(alignment: .top, spacing: 10) {
                 Text("\(position)")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.white)
                     .frame(width: 28, height: 28)
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color(hex: "#4A535C").opacity(0.40))
+                            .fill(Theme.accent)
                     )
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(exercise.title)
                         .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.ink)
                         .lineLimit(2)
                     Text(store.selectedPrompt(for: exercise)?.title ?? "Valitse kriteeri")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(Theme.inkMuted)
                         .lineLimit(2)
                 }
 
@@ -623,24 +621,30 @@ private struct AutopilotQueuedTile: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(CircularActionButtonStyle(tint: Color(hex: "#7E8A93")))
+                .buttonStyle(CircularActionButtonStyle(tint: Theme.neutral))
             }
 
             ExerciseInfoLine(label: "Arvioimatta", value: "\(exercise.pendingCellCount) / \(exercise.totalCellCount)")
         }
-        .padding(16)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(
                     store.draggedAutopilotColumnKey == exercise.columnKey
-                        ? Color(hex: "#4A535C").opacity(0.38)
-                        : Color(hex: "#2D343B").opacity(0.28)
+                        ? Theme.accent.opacity(0.08)
+                        : Theme.surface
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    store.draggedAutopilotColumnKey == exercise.columnKey
+                        ? Theme.accent.opacity(0.45)
+                        : Theme.hairline,
+                    lineWidth: 1
+                )
         )
+        .shadow(color: Theme.shadow.opacity(0.5), radius: 6, x: 0, y: 2)
         .onDrag {
             store.draggedAutopilotColumnKey = exercise.columnKey
             return NSItemProvider(object: NSString(string: exercise.columnKey))

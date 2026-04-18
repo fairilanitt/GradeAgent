@@ -21,7 +21,7 @@ struct StatisticsPageView: View {
                         StatisticsCard(title: "Tilastojen lataus", subtitle: "Tilastosivun tiedot eivät juuri nyt päivittyneet.") {
                             Text(statisticsErrorMessage)
                                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.82))
+                                .foregroundStyle(Theme.ink)
                                 .textSelection(.enabled)
                         }
                     }
@@ -87,10 +87,10 @@ struct StatisticsPageView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Tilastot")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.ink)
                 Text("Kokeet, tehtävät ja opiskelijoiden suoriutuminen yhdessä näkymässä")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.76))
+                    .foregroundStyle(Theme.inkMuted)
             }
 
             Spacer(minLength: 0)
@@ -100,7 +100,7 @@ struct StatisticsPageView: View {
             } label: {
                 Label("Päivitä", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#7E8A93")))
+            .buttonStyle(LiquidGlassButtonStyle(tint: Theme.neutral))
         }
     }
 
@@ -170,7 +170,7 @@ struct StatisticsPageView: View {
                             .annotation(position: .trailing, alignment: .center) {
                                 Text(bar.averagePointsText)
                                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.82))
+                                    .foregroundStyle(Theme.ink)
                             }
                         }
                         .chartLegend(.hidden)
@@ -596,11 +596,12 @@ struct StatisticsPageView: View {
             record.exerciseDisplay ?? "Muu tehtävä"
         }
         let palette = [
-            Color(hex: "#B9C0C7"),
-            Color(hex: "#969FA8"),
-            Color(hex: "#78828D"),
-            Color(hex: "#5F6974"),
-            Color(hex: "#464F58"),
+            Color(hex: "#2F6B4F"),   // sage
+            Color(hex: "#C9A96A"),   // ochre
+            Color(hex: "#B8654A"),   // terracotta
+            Color(hex: "#5E6773"),   // slate
+            Color(hex: "#8A6C9E"),   // heather
+            Color(hex: "#4F7A8C"),   // steel blue
         ]
         return grouped.keys.sorted().enumerated().map { index, key in
             StatisticsSlice(label: key, value: grouped[key]?.count ?? 0, color: palette[index % palette.count])
@@ -619,11 +620,12 @@ struct StatisticsPageView: View {
             record.exerciseDisplay ?? "Tuntematon tehtävä"
         }
         let palette = [
-            Color(hex: "#D7DDE2"),
-            Color(hex: "#AEB7C0"),
-            Color(hex: "#8C96A1"),
-            Color(hex: "#6E7883"),
-            Color(hex: "#505A65"),
+            Color(hex: "#2F6B4F"),   // sage
+            Color(hex: "#4F7A8C"),   // steel blue
+            Color(hex: "#C9A96A"),   // ochre
+            Color(hex: "#B8654A"),   // terracotta
+            Color(hex: "#8A6C9E"),   // heather
+            Color(hex: "#5E6773"),   // slate
         ]
         return grouped.keys.sorted().enumerated().compactMap { index, key in
             let records = grouped[key] ?? []
@@ -808,32 +810,32 @@ struct StatisticsPageView: View {
     private func colorForStatus(_ status: String) -> Color {
         switch status {
         case "completed", "scored":
-            return Color(hex: "#92A89A")
+            return Color(hex: "#2F6B4F")   // sage
         case "needs_review":
-            return Color(hex: "#A99E7A")
+            return Color(hex: "#C9A96A")   // ochre
         case "failed":
-            return Color(hex: "#A17F7F")
+            return Color(hex: "#B8654A")   // terracotta
         case "dry_run":
-            return Color(hex: "#8C97A2")
+            return Color(hex: "#5E6773")   // slate
         case "observed":
-            return Color(hex: "#B8C2CB")
+            return Color(hex: "#4F7A8C")   // steel blue
         default:
-            return Color(hex: "#BBC4CC")
+            return Color(hex: "#8A93A0")   // inkSoft
         }
     }
 
     private func colorForCategory(_ category: String?) -> Color {
         switch (category ?? "").lowercased() {
         case let value where value.contains("text"):
-            return Color(hex: "#D2D9DF")
+            return Color(hex: "#2F6B4F")   // sage
         case let value where value.contains("kuuntelut"):
-            return Color(hex: "#AEB9C4")
+            return Color(hex: "#4F7A8C")   // steel blue
         case let value where value.contains("gramm"):
-            return Color(hex: "#8D98A4")
+            return Color(hex: "#C9A96A")   // ochre
         case let value where value.contains("skriv"):
-            return Color(hex: "#737F8B")
+            return Color(hex: "#B8654A")   // terracotta
         default:
-            return Color(hex: "#C5CDD4")
+            return Color(hex: "#8A6C9E")   // heather
         }
     }
 }
@@ -853,7 +855,7 @@ struct LogsPageView: View {
                         StatisticsCard(title: "Lokien lataus", subtitle: "Lokitietojen hakeminen ei onnistunut juuri nyt.") {
                             Text(statisticsErrorMessage)
                                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.82))
+                                .foregroundStyle(Theme.inkMuted)
                                 .textSelection(.enabled)
                         }
                     }
@@ -889,10 +891,10 @@ struct LogsPageView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Lokit")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.ink)
                 Text("Tarkastele arvioituja oppilasvastauksia: tehtäväkonteksti, lähetetty prompti, käytetty malli ja mallin perustelut.")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.76))
+                    .foregroundStyle(Theme.inkMuted)
             }
 
             Spacer(minLength: 0)
@@ -902,7 +904,7 @@ struct LogsPageView: View {
             } label: {
                 Label("Päivitä", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#7E8A93")))
+            .buttonStyle(LiquidGlassButtonStyle(tint: Theme.neutral))
         }
     }
 
@@ -1300,10 +1302,10 @@ private struct StatisticsCard<Content: View>: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.ink)
                 Text(subtitle)
                     .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.68))
+                    .foregroundStyle(Theme.inkMuted)
             }
 
             content
@@ -1311,12 +1313,13 @@ private struct StatisticsCard<Content: View>: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(hex: "#353D45").opacity(0.22))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 1)
         )
+        .shadow(color: Theme.shadow, radius: 8, x: 0, y: 4)
     }
 }
 
@@ -1329,22 +1332,23 @@ private struct StatisticsMetricTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(Theme.inkSoft)
             Text(value)
                 .font(.system(size: 26, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.ink)
             Text(subtitle)
                 .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.68))
+                .foregroundStyle(Theme.inkMuted)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#353D45").opacity(0.20))
+        .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                .stroke(Theme.hairline, lineWidth: 1)
         )
+        .shadow(color: Theme.shadow, radius: 6, x: 0, y: 3)
     }
 }
 
@@ -1357,27 +1361,29 @@ private struct StatisticsGaugeTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(Theme.inkSoft)
             Gauge(value: value, in: 0 ... 1) {
                 EmptyView()
             } currentValueLabel: {
                 Text(StatisticsFormatting.percent(value))
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.ink)
             }
             .gaugeStyle(.accessoryCircularCapacity)
+            .tint(Theme.accent)
             Text(subtitle)
                 .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.68))
+                .foregroundStyle(Theme.inkMuted)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#353D45").opacity(0.20))
+        .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                .stroke(Theme.hairline, lineWidth: 1)
         )
+        .shadow(color: Theme.shadow, radius: 6, x: 0, y: 3)
     }
 }
 
@@ -1403,22 +1409,22 @@ private struct StatisticsFilterPicker: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(Theme.inkSoft)
             Picker(title, selection: $selection) {
                 ForEach(options, id: \.self) { option in
                     Text(display(option)).tag(option)
                 }
             }
             .pickerStyle(.menu)
-            .tint(.white)
+            .tint(Theme.ink)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#313840").opacity(0.20))
+        .background(Theme.surfaceAlt)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                .stroke(Theme.hairlineSoft, lineWidth: 1)
         )
     }
 }
@@ -1431,19 +1437,19 @@ private struct StatisticsMetaPill: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label.uppercased())
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.56))
+                .foregroundStyle(Theme.inkSoft)
             Text(value)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.88))
+                .foregroundStyle(Theme.ink)
                 .lineLimit(2)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(hex: "#2D343B").opacity(0.28))
+        .background(Theme.surfaceAlt)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                .stroke(Theme.hairlineSoft, lineWidth: 1)
         )
     }
 }
@@ -1456,10 +1462,10 @@ private struct StatisticsDetailBlock: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.62))
+                .foregroundStyle(Theme.inkSoft)
             Text(text.isEmpty ? "-" : text)
                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.86))
+                .foregroundStyle(Theme.ink)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1474,13 +1480,18 @@ private struct StatisticsAnnotationBubble: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(Theme.ink)
             Text(subtitle)
                 .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.inkMuted)
         }
-        .foregroundStyle(.white)
         .padding(8)
-        .background(Color.black.opacity(0.36))
+        .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 1)
+        )
     }
 }
 
@@ -1662,7 +1673,7 @@ private struct LogEntryCard: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(store.visibleStudentName(log.studentName))
                         .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.ink)
 
                     Text(
                         [
@@ -1674,7 +1685,7 @@ private struct LogEntryCard: View {
                         .joined(separator: " · ")
                     )
                     .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(Theme.inkMuted)
                     .lineLimit(2)
                 }
 
@@ -1691,14 +1702,15 @@ private struct LogEntryCard: View {
                 }
             }
         }
-        .tint(.white)
+        .tint(Theme.ink)
         .padding(16)
-        .background(Color(hex: "#353D45").opacity(0.22))
+        .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                .stroke(Theme.hairline, lineWidth: 1)
         )
+        .shadow(color: Theme.shadow, radius: 6, x: 0, y: 3)
     }
 
     private var modelReplyLabel: String {
@@ -1718,13 +1730,13 @@ private struct LogConversationSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(sender)
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(Theme.inkSoft)
 
             WorkspaceCanvas(title: title, subtitle: "Tarkka loki tästä vaiheesta.") {
                 ScrollView {
                     Text(bodyText)
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.92))
+                        .foregroundStyle(Theme.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
