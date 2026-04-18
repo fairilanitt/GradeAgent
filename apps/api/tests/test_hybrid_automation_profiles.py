@@ -49,6 +49,12 @@ def test_render_sanomapro_hybrid_automation_context_includes_live_review_hooks()
     assert "ctrl.gotoNextStudent()" in context
     assert "ctrl.gotoPreviousStudent()" in context
     assert "h2.student-feedback__student-number" in context
+    assert ".review-assignment__cell.review-assignment__cell--content .student-status-icon" in context
+    assert ".student-status-icon.icon-status-not-performed" in context
+    assert ".review-assignment__cell.review-assignment__cell--content .student-status-icon.icon-status-open-for-review, .review-assignment__cell.review-assignment__cell--content .student-status-icon.icon-status-reviewed" in context
+    assert ".review-assignment__total-score" in context
+    assert ".review-assignment__grade" in context
+    assert "title='Ei suoritusta' | title='Arvioitavissa' | title='Arvioitu, ei julkaistu'" in context
     assert ".item-body.eb-instruction-activity, .item-body.ng-scope.eb-instruction-activity" in context
     assert ".item-body.eb-question .eb-instruction-text, .item-body.ng-scope.eb-question .eb-instruction-text" in context
     assert ".answer-model .answer-container" in context

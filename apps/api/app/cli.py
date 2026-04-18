@@ -453,7 +453,7 @@ class GradeAgentShell(cmd.Cmd):
         self.settings = get_settings().model_copy(
             update={
                 "browser_headless": False,
-                "browser_attach_to_existing_chrome": False,
+                "browser_attach_to_existing_chrome": True,
             }
         )
         self.browser_service = BrowserNavigationService(self.settings)
@@ -665,7 +665,7 @@ class GradeAgentShell(cmd.Cmd):
             asyncio.set_event_loop(loop)
 
             self.console.print()
-            self.console.print(Panel("Step 1 of 5: Launching the dedicated GradeAgent browser.", border_style="cyan"))
+            self.console.print(Panel("Step 1 of 5: Connecting to an open browser or launching GradeAgent browser if needed.", border_style="cyan"))
             if self.settings.browser_use_system_chrome:
                 self.console.print(
                     "Using your installed Chrome with a slim GradeAgent profile that keeps login and site data.",
@@ -751,7 +751,7 @@ class GradeAgentShell(cmd.Cmd):
                     signal.signal(signum, previous_handler)
                 except (ValueError, OSError):
                     continue
-            if browser_session is not None:
+            if browser_session is not None and not self.browser_service.session_is_attached_browser(browser_session):
                 try:
                     loop.run_until_complete(browser_session.kill())
                 except Exception:

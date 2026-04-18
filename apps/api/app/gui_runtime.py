@@ -42,7 +42,7 @@ class GuiRuntime:
         self.settings = settings or get_settings().model_copy(
             update={
                 "browser_headless": False,
-                "browser_attach_to_existing_chrome": False,
+                "browser_attach_to_existing_chrome": True,
             }
         )
         self.service = service or BrowserNavigationService(self.settings)
@@ -165,7 +165,8 @@ class GuiRuntime:
             self._session_id = None
             self._last_overview_state = None
 
-        if browser_session is not None:
+        self.service.clear_pause_grading_request()
+        if browser_session is not None and not self.service.session_is_attached_browser(browser_session):
             self._call(browser_session.kill())
         if session_id:
             self.service.cleanup_browser_artifacts(current_job_id=session_id)
@@ -287,6 +288,7 @@ class GuiRuntime:
                 max_steps=max_steps,
             )
             self.service.clear_stop_grading_request()
+            self.service.clear_pause_grading_request()
             future = asyncio.run_coroutine_threadsafe(
                 self.service.grade_sanomapro_exercise_column_from_current_page(
                     payload=payload,
@@ -302,6 +304,7 @@ class GuiRuntime:
             result = future.result()
         finally:
             self.service.clear_stop_grading_request()
+            self.service.clear_pause_grading_request()
             with self._lock:
                 if self._active_grading_future is future:
                     self._active_grading_future = None
@@ -529,7 +532,7 @@ class GuiRuntime:
 
     def _cleanup_detached_browser_session(self, browser_session, session_id: str | None) -> None:
         try:
-            if browser_session is not None:
+            if browser_session is not None and not self.service.session_is_attached_browser(browser_session):
                 self._call(browser_session.kill())
         except Exception:
             pass
@@ -609,7 +612,7 @@ class GuiRuntime:
                 active_future.cancel()
             if active_gradebook_future is not None:
                 active_gradebook_future.cancel()
-            if browser_session is not None:
+            if browser_session is not None and not self.service.session_is_attached_browser(browser_session):
                 self._call(browser_session.kill())
         finally:
             if session_id:

@@ -587,6 +587,21 @@ def test_launch_interactive_browser_can_keep_current_page(monkeypatch) -> None:
     assert stub_session.navigated_to is None
 
 
+def test_launch_interactive_browser_keeps_current_page_when_attached(monkeypatch) -> None:
+    stub_session = StubBrowserSession()
+    stub_session.cdp_url = "http://127.0.0.1:9222"
+    settings = Settings().model_copy(update={"browser_start_url": "https://www.sanomapro.fi/auth/login/"})
+    service = BrowserNavigationService(settings)
+    monkeypatch.setattr(service, "_build_interactive_session", lambda job_id: stub_session)
+
+    session_id, browser_session = asyncio.run(service.launch_interactive_browser("job-attach"))
+
+    assert session_id == "job-attach"
+    assert browser_session is stub_session
+    assert stub_session.started is True
+    assert stub_session.navigated_to is None
+
+
 def test_list_open_tabs_includes_current_page_when_missing_from_cached_tabs() -> None:
     service = BrowserNavigationService(Settings())
     session = StubBrowserSessionWithTabs()
@@ -760,7 +775,7 @@ def test_build_interactive_session_uses_persistent_profile_dir(tmp_path) -> None
     assert session.browser_profile.enable_default_extensions is False
 
 
-def test_build_interactive_session_can_attach_to_existing_chrome() -> None:
+def test_build_interactive_session_can_attach_to_existing_chrome(monkeypatch) -> None:
     settings = Settings().model_copy(
         update={
             "browser_attach_to_existing_chrome": True,
@@ -768,10 +783,29 @@ def test_build_interactive_session_can_attach_to_existing_chrome() -> None:
         }
     )
     service = BrowserNavigationService(settings)
+    monkeypatch.setattr(service, "_discover_any_running_browser_cdp_url", lambda: "http://127.0.0.1:9333")
 
     session = service._build_interactive_session("job-attach")
 
     assert session.cdp_url == "http://127.0.0.1:9333"
+
+
+def test_build_interactive_session_falls_back_when_existing_chrome_not_reachable(monkeypatch) -> None:
+    settings = Settings().model_copy(
+        update={
+            "browser_attach_to_existing_chrome": True,
+            "browser_debug_port": 9333,
+            "browser_use_system_chrome": False,
+            "browser_direct_persistent_profile": True,
+        }
+    )
+    service = BrowserNavigationService(settings)
+    monkeypatch.setattr(service, "_discover_any_running_browser_cdp_url", lambda: None)
+    monkeypatch.setattr(service, "_discover_running_gradeagent_cdp_url", lambda profile_root: None)
+
+    session = service._build_interactive_session("job-fallback")
+
+    assert getattr(session, "cdp_url", None) in {None, ""}
 
 
 def test_discover_running_gradeagent_cdp_url_from_matching_profile(monkeypatch, tmp_path) -> None:
@@ -1047,6 +1081,87 @@ def test_extract_sanomapro_overview_state_includes_observed_scores() -> None:
     assert state.observed_scores[0].student_name == "Aada Harri"
     assert state.observed_scores[0].score_awarded == 1.0
     assert state.observed_scores[0].score_possible == 2.0
+
+
+def test_extract_sanomapro_overview_state_includes_participation_metadata() -> None:
+    service = BrowserNavigationService(Settings())
+    page = StubInteractivePage("https://arvi.sanomapro.fi/as/teacher/assignment/demo/review")
+    page.evaluate_result = {
+        "route": "/as/teacher/assignment/demo/review",
+        "assignment_title": "Demo exam",
+        "visible_cell_count": 2,
+        "reviewed_cell_count": 1,
+        "unreviewed_cell_count": 1,
+        "fully_reviewed": False,
+        "pending_candidates": [
+            {
+                "selector_index": 0,
+                "score_text": "- / 2",
+                "candidate_key": "0:- / 2",
+                "student_name": "Aada Harri",
+                "participated": True,
+                "participation_state": "participated",
+            }
+        ],
+        "exercise_columns": [
+            {
+                "column_key": "exercise-column-0",
+                "column_index": 0,
+                "label": "Text 4 / 4",
+                "category_name": "Text 4",
+                "exercise_number": "4",
+                "total_cell_count": 2,
+                "reviewed_cell_count": 1,
+                "pending_cell_count": 1,
+                "non_participant_cell_count": 1,
+                "first_pending_selector_index": 0,
+            }
+        ],
+        "observed_scores": [
+            {
+                "selector_index": 1,
+                "student_name": "Iines Malli",
+                "score_text": "2 / 2",
+                "score_awarded": 2.0,
+                "score_possible": 2.0,
+                "reviewed": True,
+                "participated": False,
+                "participation_state": "absent",
+                "participation_label": "red-status-icon",
+                "category_name": "Text 4",
+                "exercise_label": "Text 4 / 4",
+                "exercise_number": "4",
+            }
+        ],
+        "student_rows": [
+            {
+                "selector_index": 0,
+                "student_name": "Aada Harri",
+                "participated": True,
+                "participation_state": "participated",
+                "participation_label": "green-status-icon",
+                "status_signals": ["green-status-icon"],
+            },
+            {
+                "selector_index": 1,
+                "student_name": "Iines Malli",
+                "participated": False,
+                "participation_state": "absent",
+                "participation_label": "red-status-icon",
+                "status_signals": ["red-status-icon"],
+            },
+        ],
+    }
+
+    state = asyncio.run(service._extract_sanomapro_overview_state(page))
+
+    assert state.exercise_columns[0].non_participant_cell_count == 1
+    assert state.pending_candidates[0].student_name == "Aada Harri"
+    assert state.pending_candidates[0].participated is True
+    assert state.observed_scores[0].participated is False
+    assert state.observed_scores[0].participation_state == "absent"
+    assert state.student_rows[1].student_name == "Iines Malli"
+    assert state.student_rows[1].participated is False
 
 
 def test_sanomapro_reasoning_overlay_text_omits_placeholder_before_decision() -> None:

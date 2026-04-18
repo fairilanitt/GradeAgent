@@ -239,6 +239,7 @@ class GuiExerciseColumn(BaseModel):
     total_cell_count: int = 0
     reviewed_cell_count: int = 0
     pending_cell_count: int = 0
+    non_participant_cell_count: int = 0
 
 
 class GuiOverviewObservedScore(BaseModel):
@@ -251,6 +252,9 @@ class GuiOverviewObservedScore(BaseModel):
     category_name: str | None = None
     exercise_label: str | None = None
     exercise_number: str | None = None
+    participated: bool | None = None
+    participation_state: str | None = None
+    participation_label: str | None = None
 
 
 class GuiStateResponse(BaseModel):
@@ -340,6 +344,8 @@ class GuiGradebookExamResult(BaseModel):
     group_name: str | None = None
     status_text: str | None = None
     matched_student_name: str = ""
+    participated: bool | None = None
+    participation_label: str | None = None
     overview_url: str = ""
     total_score_awarded: float | None = None
     total_score_possible: float | None = None

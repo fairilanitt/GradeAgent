@@ -198,6 +198,9 @@ private struct GradebookFindingCard: View {
                 }
                 MiniInfoPill(label: "Opiskelija", value: store.visibleStudentName(finding.matchedStudentName))
                 MiniInfoPill(label: "Merkinnät", value: "\(finding.reviewedScoreCount)")
+                if let participationText = participationText {
+                    MiniInfoPill(label: "Osallistuminen", value: participationText)
+                }
             }
 
             if !finding.exerciseScores.isEmpty {
@@ -235,6 +238,19 @@ private struct GradebookFindingCard: View {
             return "\(formatScore(awarded)) / \(formatScore(possible))"
         }
         return "Ei kokonaistulosta"
+    }
+
+    private var participationText: String? {
+        if finding.participated == true {
+            return "Osallistui"
+        }
+        if finding.participated == false {
+            return "Ei osallistunut"
+        }
+        if let label = finding.participationLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            return label
+        }
+        return nil
     }
 
     private func formatScore(_ value: Double) -> String {
