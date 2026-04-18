@@ -59,8 +59,32 @@ struct GuiExerciseColumn: Codable, Identifiable, Hashable {
     let totalCellCount: Int
     let reviewedCellCount: Int
     let pendingCellCount: Int
+    let nonParticipantCellCount: Int
 
     var id: String { columnKey }
+
+    private enum CodingKeys: String, CodingKey {
+        case columnKey
+        case title
+        case categoryName
+        case exerciseNumber
+        case totalCellCount
+        case reviewedCellCount
+        case pendingCellCount
+        case nonParticipantCellCount
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        columnKey = try container.decode(String.self, forKey: .columnKey)
+        title = try container.decode(String.self, forKey: .title)
+        categoryName = try container.decodeIfPresent(String.self, forKey: .categoryName)
+        exerciseNumber = try container.decodeIfPresent(String.self, forKey: .exerciseNumber)
+        totalCellCount = try container.decodeIfPresent(Int.self, forKey: .totalCellCount) ?? 0
+        reviewedCellCount = try container.decodeIfPresent(Int.self, forKey: .reviewedCellCount) ?? 0
+        pendingCellCount = try container.decodeIfPresent(Int.self, forKey: .pendingCellCount) ?? 0
+        nonParticipantCellCount = try container.decodeIfPresent(Int.self, forKey: .nonParticipantCellCount) ?? 0
+    }
 }
 
 struct GuiStateResponse: Codable {
@@ -128,6 +152,9 @@ struct GuiOverviewObservedScore: Codable, Identifiable, Hashable {
     let categoryName: String?
     let exerciseLabel: String?
     let exerciseNumber: String?
+    let participated: Bool?
+    let participationState: String?
+    let participationLabel: String?
 
     var id: String {
         [
@@ -239,6 +266,8 @@ struct GuiGradebookExamResult: Decodable, Identifiable, Hashable {
     let groupName: String?
     let statusText: String?
     let matchedStudentName: String
+    let participated: Bool?
+    let participationLabel: String?
     let overviewURL: String
     let totalScoreAwarded: Double?
     let totalScorePossible: Double?
@@ -253,6 +282,8 @@ struct GuiGradebookExamResult: Decodable, Identifiable, Hashable {
         case groupName
         case statusText
         case matchedStudentName
+        case participated
+        case participationLabel
         case overviewUrl
         case totalScoreAwarded
         case totalScorePossible
@@ -273,6 +304,8 @@ struct GuiGradebookExamResult: Decodable, Identifiable, Hashable {
         groupName = try container.decodeIfPresent(String.self, forKey: .groupName)
         statusText = try container.decodeIfPresent(String.self, forKey: .statusText)
         matchedStudentName = try container.decode(String.self, forKey: .matchedStudentName)
+        participated = try container.decodeIfPresent(Bool.self, forKey: .participated)
+        participationLabel = try container.decodeIfPresent(String.self, forKey: .participationLabel)
         overviewURL = try container.decode(String.self, forKey: .overviewUrl)
         totalScoreAwarded = try container.decodeIfPresent(Double.self, forKey: .totalScoreAwarded)
         totalScorePossible = try container.decodeIfPresent(Double.self, forKey: .totalScorePossible)

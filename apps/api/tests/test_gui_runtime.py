@@ -58,8 +58,14 @@ class FakeBrowserNavigationService:
     def clear_stop_grading_request(self) -> None:
         return None
 
+    def clear_pause_grading_request(self) -> None:
+        return None
+
     def request_stop_grading(self) -> None:
         return None
+
+    def session_is_attached_browser(self, browser_session) -> bool:
+        return bool(getattr(browser_session, "cdp_url", None))
 
     async def grade_sanomapro_exercise_column_from_current_page(self, payload, job_id, browser_session, column_key):
         self.captured_payloads.append((column_key, payload))
@@ -90,7 +96,12 @@ class FakeBrowserNavigationService:
 
 
 class FakeBrowserSession:
+    def __init__(self, *, cdp_url: str | None = None) -> None:
+        self.cdp_url = cdp_url
+        self.killed = False
+
     async def kill(self) -> None:
+        self.killed = True
         return None
 
 
@@ -228,3 +239,23 @@ def test_gui_runtime_answers_gradebook_queries_through_browser_service() -> None
     assert service.gradebook_questions == [
         "Kerro oppilaan Siiri Vehviläisen saamat arvosanat viimeisen 2 kuukauden ajalta."
     ]
+
+
+def test_gui_runtime_stop_browser_preserves_attached_browser() -> None:
+    service = FakeBrowserNavigationService()
+    runtime = GuiRuntime(
+        service=service,
+        prompt_library=FakePromptLibrary(),
+        statistics_store=FakeStatisticsStore(),
+    )
+    attached_session = FakeBrowserSession(cdp_url="http://127.0.0.1:9222")
+    runtime._browser_session = attached_session
+    runtime._session_id = "session-attached"
+
+    try:
+        state = runtime.stop_browser()
+    finally:
+        runtime.shutdown()
+
+    assert state.browser_ready is False
+    assert attached_session.killed is False

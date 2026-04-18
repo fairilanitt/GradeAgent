@@ -77,6 +77,7 @@ def _map_gui_column(column) -> GuiExerciseColumn:
         total_cell_count=column.total_cell_count,
         reviewed_cell_count=column.reviewed_cell_count,
         pending_cell_count=column.pending_cell_count,
+        non_participant_cell_count=column.non_participant_cell_count,
     )
 
 
@@ -99,6 +100,9 @@ def _build_gui_overview_response(overview_state) -> GuiOverviewResponse:
                 category_name=item.category_name,
                 exercise_label=item.exercise_label,
                 exercise_number=item.exercise_number,
+                participated=item.participated,
+                participation_state=item.participation_state,
+                participation_label=item.participation_label,
             )
             for item in overview_state.observed_scores
         ],

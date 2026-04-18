@@ -13,7 +13,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "GradeAgentMacApp",
-            path: "Sources/GradeAgentMacApp"
+            path: "Sources/GradeAgentMacApp/Frontend",
+            exclude: ["README.md"]
         ),
     ]
 )

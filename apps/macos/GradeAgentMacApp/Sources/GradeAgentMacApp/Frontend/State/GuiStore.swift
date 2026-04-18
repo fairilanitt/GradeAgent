@@ -283,7 +283,7 @@ final class GuiStore: ObservableObject {
         guard !isStartingBrowser else { return }
         isStartingBrowser = true
         latestErrorMessage = nil
-        statusMessage = "Käynnistetään GradeAgent-selain..."
+        statusMessage = "Yhdistetään avoimeen selaimeen tai käynnistetään selain tarvittaessa..."
         defer { isStartingBrowser = false }
 
         do {
@@ -297,7 +297,7 @@ final class GuiStore: ObservableObject {
             autopilotResults = []
             isStopGradingRequested = false
             gradebookRunning = false
-            statusMessage = "Selain on auki. Siirry Sanoman kokeen yleisnäkymään, niin tehtävät ilmestyvät tähän automaattisesti."
+            statusMessage = "Selainyhteys on valmis. Siirry Sanoman kokeen yleisnäkymään, niin tehtävät ilmestyvät tähän automaattisesti."
             resultMessage = "Selaimen istunto on valmis: \(response.sessionId)"
             updateAutomaticOverviewDetection()
         } catch {

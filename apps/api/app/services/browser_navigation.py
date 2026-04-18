@@ -76,6 +76,9 @@ class SanomaOverviewCandidate(BaseModel):
     selector_index: int = Field(ge=0)
     score_text: str = ""
     candidate_key: str = ""
+    student_name: str = ""
+    participated: bool | None = None
+    participation_state: str | None = None
 
 
 class SanomaOverviewExerciseColumn(BaseModel):
@@ -87,7 +90,17 @@ class SanomaOverviewExerciseColumn(BaseModel):
     total_cell_count: int = Field(default=0, ge=0)
     reviewed_cell_count: int = Field(default=0, ge=0)
     pending_cell_count: int = Field(default=0, ge=0)
+    non_participant_cell_count: int = Field(default=0, ge=0)
     first_pending_selector_index: int | None = None
+
+
+class SanomaOverviewStudentRow(BaseModel):
+    selector_index: int = Field(default=0, ge=0)
+    student_name: str = ""
+    participated: bool | None = None
+    participation_state: str | None = None
+    participation_label: str | None = None
+    status_signals: list[str] = Field(default_factory=list)
 
 
 class SanomaOverviewObservedScore(BaseModel):
@@ -97,6 +110,9 @@ class SanomaOverviewObservedScore(BaseModel):
     score_awarded: float | None = None
     score_possible: float | None = None
     reviewed: bool = False
+    participated: bool | None = None
+    participation_state: str | None = None
+    participation_label: str | None = None
     category_name: str | None = None
     exercise_label: str | None = None
     exercise_number: str | None = None
@@ -115,6 +131,7 @@ class SanomaOverviewState(BaseModel):
     pending_candidates: list[SanomaOverviewCandidate] = Field(default_factory=list)
     exercise_columns: list[SanomaOverviewExerciseColumn] = Field(default_factory=list)
     observed_scores: list[SanomaOverviewObservedScore] = Field(default_factory=list)
+    student_rows: list[SanomaOverviewStudentRow] = Field(default_factory=list)
 
 
 class SanomaAssignmentsListRow(BaseModel):
@@ -281,6 +298,14 @@ class BrowserNavigationService:
         "Login Data For Account",
         "Web Data",
     )
+    EXTERNAL_BROWSER_PROCESS_MARKERS = (
+        "google chrome",
+        "chromium",
+        "brave browser",
+        "microsoft edge",
+        "msedge",
+        "arc",
+    )
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -292,6 +317,7 @@ class BrowserNavigationService:
         self._last_sanomapro_report_entries: list[SanomaGradingReportEntry] = []
         self._last_sanomapro_score_audit: SanomaScoreDecisionAudit | None = None
         self._stop_grading_requested = threading.Event()
+        self._pause_grading_requested = threading.Event()
 
     def _remember_sanomapro_overview_context(self, overview_state: SanomaOverviewState) -> None:
         self._last_sanomapro_assignment_title = (overview_state.assignment_title or "").strip() or None
@@ -352,6 +378,122 @@ class BrowserNavigationService:
 
     def _should_stop_grading(self) -> bool:
         return self._stop_grading_requested.is_set()
+
+    def request_pause_grading(self) -> None:
+        self._pause_grading_requested.set()
+
+    def resume_grading(self) -> None:
+        self._pause_grading_requested.clear()
+
+    def clear_pause_grading_request(self) -> None:
+        self._pause_grading_requested.clear()
+
+    def _is_grading_paused(self) -> bool:
+        return self._pause_grading_requested.is_set()
+
+    def _taskbar_primary_text(
+        self,
+        *,
+        mode: str,
+        headline: str,
+        detail: str,
+        stats: dict[str, str | int | float | None] | None,
+        meta: dict[str, str | int | float | None] | None,
+    ) -> str:
+        merged = {**(stats or {}), **(meta or {})}
+        if mode == "paused":
+            return "Arviointi tauolla"
+        normalized = headline.strip().lower()
+        if normalized == "scanning review overview":
+            return "Etsitään uusi tehtävä"
+        if normalized == "selecting exercise":
+            return "Valitaan tehtävä"
+        if normalized == "preparing exercise":
+            return "Valmistellaan tehtävä"
+        if normalized == "selecting first student":
+            return "Siirrytään ensimmäiseen oppilaaseen"
+        if normalized == "grading exercise":
+            return "Annetaan arviointiehdotus"
+        if normalized == "entering scores":
+            points_text = merged.get("Points") or merged.get("Pisteet")
+            if points_text not in {None, ""}:
+                return f"Annetaan pisteet {points_text}"
+            return "Annetaan pisteet"
+        if normalized == "selecting next student":
+            return "Arvioidaan seuraavaa oppilasta"
+        if normalized == "returning to overview":
+            return "Kootaan tuloksia"
+        if normalized == "teacher review needed":
+            return "Tarvitaan opettajan tarkistus"
+        if normalized == "exercise grading completed":
+            return "Tehtävä arvioitu"
+        if normalized == "exercise grading needs review":
+            return "Tehtävä vaatii tarkistuksen"
+        if normalized == "exercise grading stopped":
+            return "Arviointi pysäytetty"
+        if normalized == "opening exercise failed":
+            return "Tehtävää ei voitu avata"
+        if normalized == "score fields unavailable":
+            return "Pistekenttiä ei löytynyt"
+        return headline.strip()
+
+    async def _consume_overlay_control_action(self, page) -> str | None:
+        try:
+            action = await page.evaluate(
+                """
+                () => {
+                  const key = '__gradeagent_taskbar_action__';
+                  const fromSession = window.sessionStorage?.getItem(key) || '';
+                  const fromMemory = window.__gradeagentTaskbarAction__ || '';
+                  const nextAction = fromSession || fromMemory || '';
+                  if (!nextAction) return null;
+                  try {
+                    window.sessionStorage?.removeItem(key);
+                  } catch {}
+                  try {
+                    window.__gradeagentTaskbarAction__ = '';
+                  } catch {}
+                  return nextAction;
+                }
+                """
+            )
+        except Exception:
+            return None
+        if action in {"pause", "resume"}:
+            return action
+        return None
+
+    async def _sync_overlay_control_action(self, page) -> None:
+        action = await self._consume_overlay_control_action(page)
+        if action == "pause":
+            self.request_pause_grading()
+        elif action == "resume":
+            self.resume_grading()
+
+    async def _wait_if_grading_paused(
+        self,
+        page,
+        *,
+        headline: str,
+        detail: str,
+        stats: dict[str, str | int | float | None] | None = None,
+        meta: dict[str, str | int | float | None] | None = None,
+        note: str | None = None,
+    ) -> None:
+        await self._sync_overlay_control_action(page)
+        while self._is_grading_paused() and not self._should_stop_grading():
+            await self._set_browser_status_overlay(
+                page,
+                mode="paused",
+                headline=headline,
+                detail=detail,
+                stats=stats,
+                meta=meta,
+                note=note or "Jatka arviointia painamalla toistopainiketta.",
+                record_event=False,
+            )
+            await asyncio.sleep(0.25)
+            await self._sync_overlay_control_action(page)
 
     def _sanomapro_overview_column_label(self, column: SanomaOverviewExerciseColumn | None) -> str | None:
         if column is None:
@@ -455,6 +597,51 @@ class BrowserNavigationService:
             if self._cdp_http_url_is_reachable(cdp_url):
                 return cdp_url
         return None
+
+    def _cmdline_looks_like_supported_browser(self, cmdline: list[str]) -> bool:
+        joined = " ".join(str(part) for part in cmdline if part).lower()
+        return any(marker in joined for marker in self.EXTERNAL_BROWSER_PROCESS_MARKERS)
+
+    def _discover_any_running_browser_cdp_url(self) -> str | None:
+        configured = (self.settings.browser_existing_chrome_cdp_url or "").strip()
+        if configured and self._cdp_http_url_is_reachable(configured):
+            return configured
+
+        default_cdp = self._resolved_existing_chrome_cdp_url()
+        if self._cdp_http_url_is_reachable(default_cdp):
+            return default_cdp
+
+        seen_ports: set[int] = set()
+        candidates: list[tuple[float, str]] = []
+        for process in psutil.process_iter(["cmdline", "create_time"]):
+            try:
+                cmdline = [str(part) for part in (process.info.get("cmdline") or []) if part]
+                create_time = float(process.info.get("create_time") or 0.0)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, ValueError, TypeError):
+                continue
+            if not cmdline or not self._cmdline_looks_like_supported_browser(cmdline):
+                continue
+
+            port_text = self._cli_arg_value(cmdline, "remote-debugging-port")
+            if not port_text:
+                continue
+            try:
+                port = int(port_text)
+            except (TypeError, ValueError):
+                continue
+            if port <= 0 or port in seen_ports:
+                continue
+            seen_ports.add(port)
+            cdp_url = f"http://127.0.0.1:{port}"
+            if not self._cdp_http_url_is_reachable(cdp_url):
+                continue
+            candidates.append((create_time, cdp_url))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
 
     def _http_cdp_page_targets(self, cdp_url: str) -> list[dict[str, str]]:
         try:
@@ -1380,14 +1567,17 @@ Be conservative. If uncertain, do not choose exam_grading.
         keep_alive: bool,
         allowed_domains: list[str] | None = None,
         downloads_path: str | None = None,
+        prefer_existing_browser: bool = False,
     ) -> BrowserSession:
-        if self.settings.browser_attach_to_existing_chrome:
-            return BrowserSession(
-                cdp_url=self._resolved_existing_chrome_cdp_url(),
-                keep_alive=keep_alive,
-                allowed_domains=allowed_domains,
-                downloads_path=downloads_path,
-            )
+        if prefer_existing_browser and self.settings.browser_attach_to_existing_chrome:
+            attached_cdp_url = self._discover_any_running_browser_cdp_url()
+            if attached_cdp_url:
+                return BrowserSession(
+                    cdp_url=attached_cdp_url,
+                    keep_alive=keep_alive,
+                    allowed_domains=allowed_domains,
+                    downloads_path=downloads_path,
+                )
 
         profile_root = self._persistent_profile_root()
         discovered_cdp_url = self._discover_running_gradeagent_cdp_url(profile_root)
@@ -1552,6 +1742,7 @@ Be conservative. If uncertain, do not choose exam_grading.
         return self._build_profiled_session(
             keep_alive=True,
             downloads_path=str(self._job_downloads_dir(job_id)),
+            prefer_existing_browser=True,
         )
 
     def _build_session(self, target_url: str, job_id: str) -> BrowserSession:
@@ -1560,7 +1751,14 @@ Be conservative. If uncertain, do not choose exam_grading.
             keep_alive=False,
             allowed_domains=[allowed_domain] if allowed_domain else None,
             downloads_path=str(self._job_downloads_dir(job_id)),
+            prefer_existing_browser=False,
         )
+
+    def session_is_attached_browser(self, browser_session: BrowserSession | None) -> bool:
+        if browser_session is None:
+            return False
+        cdp_url = getattr(browser_session, "cdp_url", None)
+        return isinstance(cdp_url, str) and bool(cdp_url.strip())
 
     async def _capture_page_state(
         self,
@@ -1603,7 +1801,7 @@ Be conservative. If uncertain, do not choose exam_grading.
         session_id = job_id or str(uuid4())
         browser_session = self._build_interactive_session(session_id)
         await browser_session.start()
-        if navigate_to_start_url and self.settings.browser_start_url:
+        if navigate_to_start_url and self.settings.browser_start_url and not self.session_is_attached_browser(browser_session):
             await browser_session.navigate_to(self.settings.browser_start_url)
         return session_id, browser_session
 
@@ -2266,7 +2464,7 @@ Be conservative. If uncertain, do not choose exam_grading.
         self,
         page,
         *,
-        mode: Literal["running", "completed", "failed", "needs_review"] = "running",
+        mode: Literal["running", "paused", "completed", "failed", "needs_review"] = "running",
         headline: str,
         detail: str,
         stats: dict[str, str | int | float | None] | None = None,
@@ -2277,13 +2475,21 @@ Be conservative. If uncertain, do not choose exam_grading.
         payload = {
             "mode": mode,
             "badge": {
-                "running": "Live",
-                "completed": "Completed",
-                "failed": "Failed",
-                "needs_review": "Needs Review",
-            }.get(mode, "Live"),
+                "running": "Käynnissä",
+                "paused": "Tauolla",
+                "completed": "Valmis",
+                "failed": "Virhe",
+                "needs_review": "Tarkistus",
+            }.get(mode, "Käynnissä"),
             "headline": headline.strip(),
             "detail": detail.strip(),
+            "taskbarPrimary": self._taskbar_primary_text(
+                mode=mode,
+                headline=headline,
+                detail=detail,
+                stats=stats,
+                meta=meta,
+            ),
             "stats": [
                 [str(label), str(value)]
                 for label, value in (stats or {}).items()
@@ -2307,192 +2513,256 @@ Be conservative. If uncertain, do not choose exam_grading.
                   const overlayId = '__gradeagent_status_overlay__';
                   const styleId = '__gradeagent_status_overlay_style__';
 
-                  if (!document.getElementById(styleId)) {{
-                    const style = document.createElement('style');
+                  let style = document.getElementById(styleId);
+                  if (!style) {{
+                    style = document.createElement('style');
                     style.id = styleId;
-                    style.textContent = `
+                    (document.head || document.documentElement).appendChild(style);
+                  }}
+                  style.textContent = `
                       #${{overlayId}} {{
                         position: fixed;
-                        top: 16px;
-                        right: 16px;
+                        left: 50%;
+                        bottom: 18px;
+                        transform: translateX(-50%);
                         z-index: 2147483647;
-                        width: min(420px, calc(100vw - 32px));
+                        width: min(860px, calc(100vw - 28px));
                         color: #f8fafc;
                         font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
                         pointer-events: none;
                       }}
-                      #${{overlayId}} .ga-card {{
-                        background:
-                          linear-gradient(160deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.94));
-                        border: 1px solid rgba(148, 163, 184, 0.28);
-                        border-radius: 18px;
-                        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.32);
-                        backdrop-filter: blur(10px);
-                        padding: 14px 15px 12px;
-                      }}
-                      #${{overlayId}}[data-mode="completed"] .ga-card {{
-                        background:
-                          linear-gradient(160deg, rgba(6, 95, 70, 0.94), rgba(15, 118, 110, 0.94));
-                      }}
-                      #${{overlayId}}[data-mode="failed"] .ga-card {{
-                        background:
-                          linear-gradient(160deg, rgba(127, 29, 29, 0.96), rgba(153, 27, 27, 0.94));
-                      }}
-                      #${{overlayId}}[data-mode="needs_review"] .ga-card {{
-                        background:
-                          linear-gradient(160deg, rgba(120, 53, 15, 0.96), rgba(146, 64, 14, 0.94));
-                      }}
-                      #${{overlayId}} .ga-topline {{
+                      #${{overlayId}} .ga-bar {{
                         display: flex;
                         align-items: center;
-                        gap: 8px;
-                        margin-bottom: 8px;
+                        gap: 12px;
+                        background:
+                          linear-gradient(180deg, rgba(19, 24, 31, 0.96), rgba(30, 36, 44, 0.95));
+                        border: 1px solid rgba(148, 163, 184, 0.16);
+                        border-radius: 14px;
+                        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.28);
+                        backdrop-filter: blur(14px);
+                        padding: 10px 12px;
+                      }}
+                      #${{overlayId}}[data-mode="completed"] .ga-bar {{
+                        background:
+                          linear-gradient(180deg, rgba(7, 92, 72, 0.96), rgba(12, 117, 104, 0.95));
+                      }}
+                      #${{overlayId}}[data-mode="failed"] .ga-bar {{
+                        background:
+                          linear-gradient(180deg, rgba(120, 33, 33, 0.96), rgba(148, 34, 34, 0.95));
+                      }}
+                      #${{overlayId}}[data-mode="needs_review"] .ga-bar {{
+                        background:
+                          linear-gradient(180deg, rgba(117, 67, 20, 0.96), rgba(145, 84, 27, 0.95));
+                      }}
+                      #${{overlayId}}[data-mode="paused"] .ga-bar {{
+                        background:
+                          linear-gradient(180deg, rgba(70, 76, 88, 0.96), rgba(51, 57, 68, 0.95));
+                      }}
+                      #${{overlayId}} .ga-status {{
+                        display: flex;
+                        align-items: center;
+                        gap: 10px;
+                        min-width: 0;
+                        flex: 1 1 auto;
                       }}
                       #${{overlayId}} .ga-badge {{
                         display: inline-flex;
                         align-items: center;
-                        padding: 3px 9px;
-                        border-radius: 999px;
-                        font-size: 11px;
+                        justify-content: center;
+                        min-width: 70px;
+                        padding: 4px 8px;
+                        border-radius: 10px;
+                        font-size: 10px;
                         font-weight: 700;
                         letter-spacing: 0.04em;
                         text-transform: uppercase;
-                        background: rgba(255, 255, 255, 0.16);
-                      }}
-                      #${{overlayId}} .ga-clock {{
-                        margin-left: auto;
-                        opacity: 0.78;
-                        font-size: 11px;
-                      }}
-                      #${{overlayId}} .ga-headline {{
-                        font-size: 18px;
-                        font-weight: 700;
-                        margin-bottom: 4px;
-                      }}
-                      #${{overlayId}} .ga-detail {{
-                        font-size: 13px;
-                        opacity: 0.94;
-                        white-space: pre-wrap;
-                      }}
-                      #${{overlayId}} .ga-stats {{
-                        display: grid;
-                        grid-template-columns: repeat(3, minmax(0, 1fr));
-                        gap: 8px;
-                        margin-top: 12px;
-                      }}
-                      #${{overlayId}} .ga-stat {{
                         background: rgba(255, 255, 255, 0.12);
-                        border: 1px solid rgba(255, 255, 255, 0.10);
-                        border-radius: 14px;
-                        padding: 9px 10px;
+                        flex: 0 0 auto;
                       }}
-                      #${{overlayId}} .ga-stat-label {{
-                        display: block;
-                        font-size: 10px;
+                      #${{overlayId}} .ga-copy {{
+                        min-width: 0;
+                        flex: 1 1 auto;
+                      }}
+                      #${{overlayId}} .ga-primary {{
+                        font-size: 14px;
                         font-weight: 700;
-                        letter-spacing: 0.06em;
-                        text-transform: uppercase;
+                        line-height: 1.2;
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                      }}
+                      #${{overlayId}} .ga-secondary {{
+                        font-size: 11px;
                         opacity: 0.7;
-                        margin-bottom: 3px;
+                        line-height: 1.25;
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        margin-top: 2px;
                       }}
-                      #${{overlayId}} .ga-stat-value {{
-                        display: block;
-                        font-size: 17px;
+                      #${{overlayId}} .ga-pills {{
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                        flex-wrap: wrap;
+                        margin-top: 6px;
+                      }}
+                      #${{overlayId}} .ga-pill {{
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 5px;
+                        padding: 3px 7px;
+                        border-radius: 9px;
+                        background: rgba(255, 255, 255, 0.08);
+                        border: 1px solid rgba(255, 255, 255, 0.07);
+                        font-size: 10px;
+                        line-height: 1.2;
+                      }}
+                      #${{overlayId}} .ga-pill-label {{
                         font-weight: 700;
-                        line-height: 1.15;
+                        text-transform: uppercase;
+                        opacity: 0.62;
+                      }}
+                      #${{overlayId}} .ga-pill-value {{
+                        font-weight: 700;
+                        opacity: 0.92;
                       }}
                       #${{overlayId}} .ga-note {{
-                        margin-top: 12px;
-                        padding: 9px 11px;
-                        border-radius: 13px;
-                        background: rgba(255, 255, 255, 0.09);
-                        border: 1px solid rgba(255, 255, 255, 0.09);
-                        font-size: 12px;
-                        line-height: 1.45;
-                        color: rgba(248, 250, 252, 0.9);
-                      }}
-                      #${{overlayId}} .ga-meta {{
-                        display: grid;
-                        grid-template-columns: repeat(2, minmax(0, 1fr));
-                        gap: 8px;
-                        margin-top: 12px;
-                      }}
-                      #${{overlayId}} .ga-meta-item {{
-                        background: rgba(255, 255, 255, 0.08);
-                        border: 1px solid rgba(255, 255, 255, 0.08);
-                        border-radius: 12px;
-                        padding: 8px 9px;
-                      }}
-                      #${{overlayId}} .ga-meta-label {{
-                        display: block;
                         font-size: 10px;
+                        opacity: 0.64;
+                        margin-left: 10px;
+                        max-width: 180px;
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                      }}
+                      #${{overlayId}} .ga-clock {{
+                        font-size: 10px;
+                        opacity: 0.5;
+                        margin-left: 6px;
+                      }}
+                      #${{overlayId}} .ga-controls {{
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 6px;
+                        flex: 0 0 auto;
+                        pointer-events: auto;
+                      }}
+                      #${{overlayId}} .ga-button {{
+                        appearance: none;
+                        border: 1px solid rgba(255, 255, 255, 0.10);
+                        background: rgba(255, 255, 255, 0.09);
+                        color: #f8fafc;
+                        width: 34px;
+                        height: 34px;
+                        border-radius: 10px;
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 14px;
                         font-weight: 700;
-                        letter-spacing: 0.05em;
-                        text-transform: uppercase;
-                        opacity: 0.7;
-                        margin-bottom: 2px;
+                        cursor: pointer;
+                        transition: background 120ms ease, opacity 120ms ease, transform 120ms ease;
                       }}
-                      #${{overlayId}} .ga-meta-value {{
-                        display: block;
-                        font-size: 12px;
-                        font-weight: 600;
-                        word-break: break-word;
+                      #${{overlayId}} .ga-button:hover:not(:disabled) {{
+                        background: rgba(255, 255, 255, 0.16);
+                        transform: translateY(-1px);
                       }}
-                      #${{overlayId}} .ga-meta-item[data-size="wide"] {{
-                        grid-column: 1 / -1;
-                        background: rgba(255, 255, 255, 0.06);
+                      #${{overlayId}} .ga-button:disabled {{
+                        opacity: 0.34;
+                        cursor: default;
                       }}
-                      @media (max-width: 560px) {{
-                        #${{overlayId}} .ga-stats,
-                        #${{overlayId}} .ga-meta {{
-                          grid-template-columns: minmax(0, 1fr);
+                      #${{overlayId}} .ga-button[data-role="resume"] {{
+                        background: rgba(52, 211, 153, 0.16);
+                        border-color: rgba(52, 211, 153, 0.22);
+                      }}
+                      #${{overlayId}} .ga-button[data-role="pause"] {{
+                        background: rgba(248, 250, 252, 0.08);
+                      }}
+                      @media (max-width: 680px) {{
+                        #${{overlayId}} {{
+                          width: calc(100vw - 18px);
+                          bottom: 10px;
+                        }}
+                        #${{overlayId}} .ga-bar {{
+                          padding: 9px 10px;
+                          gap: 10px;
+                        }}
+                        #${{overlayId}} .ga-note,
+                        #${{overlayId}} .ga-clock {{
+                          display: none;
                         }}
                       }}
                     `;
-                    (document.head || document.documentElement).appendChild(style);
-                  }}
 
                   let root = document.getElementById(overlayId);
+                  const bindTaskbarActions = (targetRoot) => {{
+                    const setAction = (action) => {{
+                      try {{
+                        window.__gradeagentTaskbarAction__ = action;
+                        window.sessionStorage?.setItem('__gradeagent_taskbar_action__', action);
+                      }} catch {{}}
+                    }};
+                    targetRoot.querySelector('.ga-button[data-role="pause"]')?.addEventListener('click', (event) => {{
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setAction('pause');
+                    }});
+                    targetRoot.querySelector('.ga-button[data-role="resume"]')?.addEventListener('click', (event) => {{
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setAction('resume');
+                    }});
+                  }};
+                  const taskbarMarkup = `
+                    <div class="ga-bar">
+                      <div class="ga-status">
+                        <span class="ga-badge"></span>
+                        <div class="ga-copy">
+                          <div class="ga-primary"></div>
+                          <div class="ga-secondary"></div>
+                          <div class="ga-pills"></div>
+                        </div>
+                        <div class="ga-note" hidden></div>
+                        <div class="ga-clock"></div>
+                      </div>
+                      <div class="ga-controls">
+                        <button class="ga-button" data-role="pause" type="button" aria-label="Pause">❚❚</button>
+                        <button class="ga-button" data-role="resume" type="button" aria-label="Resume">▶</button>
+                      </div>
+                    </div>
+                  `;
                   if (!root) {{
                     root = document.createElement('section');
                     root.id = overlayId;
-                    root.innerHTML = `
-                      <div class="ga-card">
-                        <div class="ga-topline">
-                          <span class="ga-badge"></span>
-                          <span class="ga-phase"></span>
-                          <span class="ga-clock"></span>
-                        </div>
-                        <div class="ga-headline"></div>
-                        <div class="ga-detail"></div>
-                        <div class="ga-stats"></div>
-                        <div class="ga-note" hidden></div>
-                        <div class="ga-meta"></div>
-                      </div>
-                    `;
+                    root.innerHTML = taskbarMarkup;
+                    bindTaskbarActions(root);
                     (document.body || document.documentElement).appendChild(root);
+                  }} else if (!root.querySelector('.ga-bar') || !root.querySelector('.ga-primary')) {{
+                    root.innerHTML = taskbarMarkup;
+                    bindTaskbarActions(root);
                   }}
 
                   root.dataset.mode = payload.mode;
                   root.querySelector('.ga-badge').textContent = payload.badge;
-                  root.querySelector('.ga-phase').textContent = payload.mode.replace('_', ' ');
                   root.querySelector('.ga-clock').textContent = payload.timestamp;
-                  root.querySelector('.ga-headline').textContent = payload.headline;
-                  root.querySelector('.ga-detail').textContent = payload.detail;
+                  root.querySelector('.ga-primary').textContent = payload.taskbarPrimary || payload.headline;
+                  root.querySelector('.ga-secondary').textContent = payload.detail || '';
 
-                  const statsRoot = root.querySelector('.ga-stats');
-                  statsRoot.replaceChildren();
-                  for (const [label, value] of payload.stats || []) {{
-                    const item = document.createElement('div');
-                    item.className = 'ga-stat';
+                  const pillsRoot = root.querySelector('.ga-pills');
+                  pillsRoot.replaceChildren();
+                  for (const [label, value] of [...(payload.stats || []), ...(payload.meta || [])].slice(0, 3)) {{
+                    const item = document.createElement('span');
+                    item.className = 'ga-pill';
                     const labelEl = document.createElement('span');
-                    labelEl.className = 'ga-stat-label';
+                    labelEl.className = 'ga-pill-label';
                     labelEl.textContent = label;
                     const valueEl = document.createElement('span');
-                    valueEl.className = 'ga-stat-value';
+                    valueEl.className = 'ga-pill-value';
                     valueEl.textContent = value;
                     item.append(labelEl, valueEl);
-                    statsRoot.appendChild(item);
+                    pillsRoot.appendChild(item);
                   }}
 
                   const noteEl = root.querySelector('.ga-note');
@@ -2504,22 +2774,11 @@ Be conservative. If uncertain, do not choose exam_grading.
                     noteEl.textContent = '';
                   }}
 
-                  const metaRoot = root.querySelector('.ga-meta');
-                  metaRoot.replaceChildren();
-                  for (const [label, value] of payload.meta || []) {{
-                    const item = document.createElement('div');
-                    item.className = 'ga-meta-item';
-                    if (String(value).length > 72) {{
-                      item.dataset.size = 'wide';
-                    }}
-                    const labelEl = document.createElement('span');
-                    labelEl.className = 'ga-meta-label';
-                    labelEl.textContent = label;
-                    const valueEl = document.createElement('span');
-                    valueEl.className = 'ga-meta-value';
-                    valueEl.textContent = value;
-                    item.append(labelEl, valueEl);
-                    metaRoot.appendChild(item);
+                  const pauseButton = root.querySelector('.ga-button[data-role="pause"]');
+                  const resumeButton = root.querySelector('.ga-button[data-role="resume"]');
+                  if (pauseButton && resumeButton) {{
+                    pauseButton.disabled = payload.mode !== 'running';
+                    resumeButton.disabled = payload.mode !== 'paused';
                   }}
 
                   return true;
@@ -2795,6 +3054,16 @@ JSON schema instructions:
             """
             () => {
               const textOf = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+              const uniqueTexts = (values) => {
+                const seen = new Set();
+                const items = [];
+                for (const value of values.map(textOf).filter(Boolean)) {
+                  if (seen.has(value)) continue;
+                  seen.add(value);
+                  items.push(value);
+                }
+                return items;
+              };
               const overlapWidth = (leftA, rightA, leftB, rightB) =>
                 Math.max(0, Math.min(rightA, rightB) - Math.max(leftA, leftB));
               const parseVisibleScore = (text) => {
@@ -2810,6 +3079,84 @@ JSON schema instructions:
                 return {
                   awarded: parseMaybeNumber(match[1]),
                   possible: parseMaybeNumber(match[2]),
+                };
+              };
+              const parseColorChannels = (value) => {
+                const match = String(value || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/i);
+                if (!match) return null;
+                return {
+                  r: Number.parseInt(match[1], 10),
+                  g: Number.parseInt(match[2], 10),
+                  b: Number.parseInt(match[3], 10),
+                };
+              };
+              const inferParticipation = (signals) => {
+                const normalizedSignals = signals.map((value) => textOf(value).toLowerCase()).filter(Boolean);
+                const combined = normalizedSignals.join(' | ');
+                const absentPatterns = [
+                  /ei osallist/,
+                  /ei suoritt/,
+                  /poissa/,
+                  /did not participate/,
+                  /not participate/,
+                  /absent/,
+                  /xmark/,
+                  /\\bcross\\b/,
+                  /\\bclose\\b/,
+                  /\\btimes\\b/,
+                  /\\berror\\b/,
+                  /\\bdanger\\b/,
+                ];
+                const participatedPatterns = [
+                  /osallist/,
+                  /suoritt/,
+                  /valmis/,
+                  /completed/,
+                  /participat/,
+                  /checkmark/,
+                  /\\bcheck\\b/,
+                  /\\bsuccess\\b/,
+                  /\\bdone\\b/,
+                ];
+                if (absentPatterns.some((pattern) => pattern.test(combined))) {
+                  return {
+                    participated: false,
+                    participation_state: 'absent',
+                    participation_label: normalizedSignals.find(Boolean) || 'absent',
+                  };
+                }
+                if (participatedPatterns.some((pattern) => pattern.test(combined))) {
+                  return {
+                    participated: true,
+                    participation_state: 'participated',
+                    participation_label: normalizedSignals.find(Boolean) || 'participated',
+                  };
+                }
+                const colorSignals = normalizedSignals
+                  .map((signal) => parseColorChannels(signal))
+                  .filter(Boolean);
+                if (
+                  colorSignals.some((color) => color.r >= 140 && color.r > color.g + 40 && color.r > color.b + 20)
+                ) {
+                  return {
+                    participated: false,
+                    participation_state: 'absent',
+                    participation_label: 'red-status-icon',
+                  };
+                }
+                if (
+                  colorSignals.some((color) => color.g >= 120 && color.g > color.r + 30 && color.g > color.b + 10)
+                ) {
+                  return {
+                    participated: true,
+                    participation_state: 'participated',
+                    participation_label: 'green-status-icon',
+                  };
+                }
+                return {
+                  participated: null,
+                  participation_state: null,
+                  participation_label: null,
                 };
               };
               const definitionTextFor = (label) => {
@@ -2863,6 +3210,30 @@ JSON schema instructions:
               const studentRowsRaw = Array.from(document.querySelectorAll(studentNameSelector))
                 .map((cell, selectorIndex) => {
                   const rect = cell.getBoundingClientRect();
+                  const statusCandidates = Array.from(cell.querySelectorAll('*')).filter((node) => {
+                    const nodeRect = node.getBoundingClientRect();
+                    if (nodeRect.width <= 0 || nodeRect.height <= 0) return false;
+                    if (nodeRect.width > 56 || nodeRect.height > 32) return false;
+                    return nodeRect.left >= rect.left + rect.width * 0.45;
+                  });
+                  const statusSignals = uniqueTexts([
+                    ...statusCandidates.flatMap((node) => {
+                      const style = window.getComputedStyle(node);
+                      return [
+                        textOf(node.innerText || node.textContent || ''),
+                        textOf(node.getAttribute?.('title') || ''),
+                        textOf(node.getAttribute?.('aria-label') || ''),
+                        textOf(node.getAttribute?.('data-original-title') || ''),
+                        textOf(node.getAttribute?.('uib-tooltip') || ''),
+                        textOf(node.getAttribute?.('ng-if') || ''),
+                        textOf(String(node.className || '')),
+                        `bg:${style?.backgroundColor || ''}`,
+                        `color:${style?.color || ''}`,
+                      ];
+                    }),
+                    ...Array.from(cell.querySelectorAll('svg title')).map((node) => textOf(node.textContent || '')),
+                  ]);
+                  const participation = inferParticipation(statusSignals);
                   return {
                     selector_index: selectorIndex,
                     text: textOf(cell.innerText || cell.textContent || ''),
@@ -2873,6 +3244,10 @@ JSON schema instructions:
                     center_y: (rect.top + rect.bottom) / 2,
                     width: rect.width,
                     height: rect.height,
+                    status_signals: statusSignals,
+                    participated: participation.participated,
+                    participation_state: participation.participation_state,
+                    participation_label: participation.participation_label,
                   };
                 })
                 .filter(
@@ -2899,7 +3274,23 @@ JSON schema instructions:
                   existing.bottom = row.bottom;
                   existing.center_y = row.center_y;
                 }
+                existing.status_signals = uniqueTexts([...(existing.status_signals || []), ...(row.status_signals || [])]);
+                const mergedParticipation = inferParticipation(existing.status_signals || []);
+                existing.participated = mergedParticipation.participated;
+                existing.participation_state = mergedParticipation.participation_state;
+                existing.participation_label = mergedParticipation.participation_label;
               }
+              const closestStudentRowForCell = (cell, preferredRowIndex = null) => {
+                const preferredRow =
+                  preferredRowIndex !== null && preferredRowIndex >= 0 ? studentRows[preferredRowIndex] || null : null;
+                if (preferredRow) return preferredRow;
+                return studentRows
+                  .map((row) => ({
+                    row,
+                    distance: Math.abs(row.center_y - ((cell.top + cell.bottom) / 2)),
+                  }))
+                  .sort((leftItem, rightItem) => leftItem.distance - rightItem.distance)[0]?.row || null;
+              };
               const cells = Array.from(document.querySelectorAll(cellSelector)).map((cell, selectorIndex) => {
                 const rect = cell.getBoundingClientRect();
                 const reviewed = cell.classList.contains('review-assignment__document--reviewed');
@@ -2921,7 +3312,18 @@ JSON schema instructions:
               const reviewedCount = cells.filter((cell) => cell.reviewed).length;
               const pendingCandidates = cells
                 .filter((item) => item.pending)
-                .map(({ pending, reviewed, left, right, top, bottom, center_x, ...item }) => item);
+                .map((item) => {
+                  const matchedStudentRow = closestStudentRowForCell(item);
+                  if (matchedStudentRow?.participated === false) return null;
+                  const { pending, reviewed, left, right, top, bottom, center_x, ...baseItem } = item;
+                  return {
+                    ...baseItem,
+                    student_name: matchedStudentRow?.text || '',
+                    participated: matchedStudentRow?.participated ?? null,
+                    participation_state: matchedStudentRow?.participation_state ?? null,
+                  };
+                })
+                .filter(Boolean);
 
               const groupedColumns = [];
               for (const cell of cells) {
@@ -3004,18 +3406,19 @@ JSON schema instructions:
                   categoryName ||
                   (exerciseNumber ? `Exercise ${exerciseNumber}` : null) ||
                   `Exercise ${columnIndex + 1}`;
-                const pendingCells = sortedCells.filter((cell) => cell.pending);
+                const pendingCells = sortedCells.filter((cell, rowIndex) => {
+                  const matchedStudentRow = closestStudentRowForCell(cell, rowIndex);
+                  return cell.pending && matchedStudentRow?.participated !== false;
+                });
+                const nonParticipantCells = sortedCells.filter((cell, rowIndex) => {
+                  const matchedStudentRow = closestStudentRowForCell(cell, rowIndex);
+                  return matchedStudentRow?.participated === false;
+                });
                 const observedScores = [];
                 for (const [rowIndex, cell] of sortedCells.entries()) {
                   const parsedScore = parseVisibleScore(cell.score_text);
                   if (parsedScore.awarded === null || parsedScore.possible === null) continue;
-                  const fallbackStudentRow = studentRows
-                    .map((row) => ({
-                      row,
-                      distance: Math.abs(row.center_y - ((cell.top + cell.bottom) / 2)),
-                    }))
-                    .sort((leftItem, rightItem) => leftItem.distance - rightItem.distance)[0]?.row;
-                  const matchedStudentRow = studentRows[rowIndex] || fallbackStudentRow || null;
+                  const matchedStudentRow = closestStudentRowForCell(cell, rowIndex);
                   observedScores.push({
                     selector_index: cell.selector_index,
                     student_name: matchedStudentRow?.text || '',
@@ -3023,6 +3426,9 @@ JSON schema instructions:
                     score_awarded: parsedScore.awarded,
                     score_possible: parsedScore.possible,
                     reviewed: cell.reviewed,
+                    participated: matchedStudentRow?.participated ?? null,
+                    participation_state: matchedStudentRow?.participation_state ?? null,
+                    participation_label: matchedStudentRow?.participation_label ?? null,
                     category_name: categoryName,
                     exercise_label: label,
                     exercise_number: exerciseNumber,
@@ -3037,6 +3443,7 @@ JSON schema instructions:
                   total_cell_count: sortedCells.length,
                   reviewed_cell_count: sortedCells.filter((cell) => cell.reviewed).length,
                   pending_cell_count: pendingCells.length,
+                  non_participant_cell_count: nonParticipantCells.length,
                   first_pending_selector_index: pendingCells[0]?.selector_index ?? null,
                   observed_scores: observedScores,
                 };
@@ -3055,6 +3462,14 @@ JSON schema instructions:
                 pending_candidates: pendingCandidates,
                 observed_scores: exerciseColumns.flatMap((column) => column.observed_scores || []),
                 exercise_columns: exerciseColumns.map(({ observed_scores, ...column }) => column),
+                student_rows: studentRows.map((row) => ({
+                  selector_index: row.selector_index,
+                  student_name: row.text,
+                  participated: row.participated ?? null,
+                  participation_state: row.participation_state ?? null,
+                  participation_label: row.participation_label ?? null,
+                  status_signals: row.status_signals || [],
+                })),
               };
             }
             """,
@@ -3235,6 +3650,7 @@ JSON schema instructions:
         row: SanomaAssignmentsListRow,
         overview_state: SanomaOverviewState,
         matched_student_name: str,
+        matched_student_row: SanomaOverviewStudentRow | None,
         overview_url: str,
         student_scores: list[SanomaOverviewObservedScore],
     ) -> GuiGradebookExamResult:
@@ -3256,6 +3672,8 @@ JSON schema instructions:
             group_name=overview_state.group_name or row.group_name or None,
             status_text=row.status_text or None,
             matched_student_name=matched_student_name,
+            participated=matched_student_row.participated if matched_student_row is not None else None,
+            participation_label=matched_student_row.participation_label if matched_student_row is not None else None,
             overview_url=overview_url,
             total_score_awarded=total_awarded,
             total_score_possible=total_possible,
@@ -3318,6 +3736,10 @@ JSON schema instructions:
             lines.append(f"   Kokonaistulos: {total_text}")
             if finding.group_name:
                 lines.append(f"   Ryhmä: {finding.group_name}")
+            if finding.participated is False:
+                lines.append("   Osallistuminen: Ei osallistunut kokeeseen")
+            elif finding.participated is True:
+                lines.append("   Osallistuminen: Osallistui kokeeseen")
             if spec.wants_exercise_breakdown and finding.exercise_scores:
                 score_parts = []
                 for score in finding.exercise_scores:
@@ -3373,22 +3795,33 @@ JSON schema instructions:
 
             overview_url = await current_page.get_url()
             overview_state = await self._extract_sanomapro_overview_state(current_page)
-            matched_student_name = self._best_matching_student_name(
-                spec.student_name,
-                {item.student_name for item in overview_state.observed_scores if item.student_name.strip()},
-            )
+            candidate_student_names = {
+                item.student_name for item in overview_state.observed_scores if item.student_name.strip()
+            } | {
+                row_item.student_name for row_item in overview_state.student_rows if row_item.student_name.strip()
+            }
+            matched_student_name = self._best_matching_student_name(spec.student_name, candidate_student_names)
             if matched_student_name:
+                matched_student_row = next(
+                    (
+                        row_item
+                        for row_item in overview_state.student_rows
+                        if self._normalize_person_text(row_item.student_name) == self._normalize_person_text(matched_student_name)
+                    ),
+                    None,
+                )
                 student_scores = [
                     item
                     for item in overview_state.observed_scores
                     if self._normalize_person_text(item.student_name) == self._normalize_person_text(matched_student_name)
                 ]
-                if student_scores:
+                if student_scores or matched_student_row is not None:
                     findings.append(
                         self._build_gradebook_exam_result(
                             row=row,
                             overview_state=overview_state,
                             matched_student_name=matched_student_name,
+                            matched_student_row=matched_student_row,
                             overview_url=overview_url,
                             student_scores=student_scores,
                         )
@@ -3957,6 +4390,19 @@ JSON schema instructions:
         try:
             while loop_count < loop_budget:
                 loop_count += 1
+                page = await browser_session.get_current_page()
+                if page is None:
+                    summary = "Stopped because the managed browser no longer exposed an active page."
+                    break
+                await self._wait_if_grading_paused(
+                    page,
+                    headline="Arviointi tauolla",
+                    detail="Jatka arviointia taskbarin toistopainikkeella.",
+                    meta={
+                        "Processed": processed_answers,
+                        "Skipped": skipped_answers,
+                    },
+                )
                 if self._should_stop_grading():
                     graceful_stop_requested = True
                     summary = (
@@ -3969,10 +4415,6 @@ JSON schema instructions:
                             "detail": summary,
                         }
                     )
-                    break
-                page = await browser_session.get_current_page()
-                if page is None:
-                    summary = "Stopped because the managed browser no longer exposed an active page."
                     break
 
                 page_url = await self.get_current_page_url(browser_session) or current_url
@@ -4647,6 +5089,20 @@ JSON schema instructions:
                             )
                             while loop_count < loop_budget:
                                 loop_count += 1
+                                page = await browser_session.get_current_page()
+                                if page is None:
+                                    summary = "Stopped because the managed browser no longer exposed an active page."
+                                    break
+                                await self._wait_if_grading_paused(
+                                    page,
+                                    headline="Arviointi tauolla",
+                                    detail="Jatka arviointia taskbarin toistopainikkeella.",
+                                    meta={
+                                        "Exercise": selected_column_label or "-",
+                                        "Processed": processed_answers,
+                                        "Skipped": skipped_answers,
+                                    },
+                                )
                                 if self._should_stop_grading():
                                     graceful_stop_requested = True
                                     summary = (
@@ -4670,10 +5126,6 @@ JSON schema instructions:
                                             "detail": summary,
                                         }
                                     )
-                                    break
-                                page = await browser_session.get_current_page()
-                                if page is None:
-                                    summary = "Stopped because the managed browser no longer exposed an active page."
                                     break
 
                                 current_url = await self.get_current_page_url(browser_session) or current_url

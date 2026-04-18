@@ -318,8 +318,33 @@ SANOMAPRO_REVIEW_OVERVIEW_PROFILE = HybridAutomationPageProfile(
         ),
         HybridAutomationSelector(
             "student_status_icon",
-            ".student-status-icon.icon-status-open-for-review",
-            "Open-for-review status icon in the name column.",
+            ".review-assignment__cell.review-assignment__cell--content .student-status-icon",
+            "Per-student answer-state icon in the name column.",
+        ),
+        HybridAutomationSelector(
+            "student_participation_badge",
+            ".review-assignment__cell.review-assignment__cell--content .student-status-icon[title]",
+            "Tooltip-bearing status badge next to the student name.",
+        ),
+        HybridAutomationSelector(
+            "student_not_answered_icon",
+            ".review-assignment__cell.review-assignment__cell--content .student-status-icon.icon-status-not-performed",
+            "Student has not submitted the exam; these rows show the tooltip 'Ei suoritusta'.",
+        ),
+        HybridAutomationSelector(
+            "student_answered_icon",
+            ".review-assignment__cell.review-assignment__cell--content .student-status-icon.icon-status-open-for-review, .review-assignment__cell.review-assignment__cell--content .student-status-icon.icon-status-reviewed",
+            "Student has submitted the exam and is either waiting for review or already reviewed.",
+        ),
+        HybridAutomationSelector(
+            "student_total_score",
+            ".review-assignment__total-score",
+            "Per-student total points column on the far right, e.g. '5 / 279'.",
+        ),
+        HybridAutomationSelector(
+            "student_grade",
+            ".review-assignment__grade",
+            "Per-student grade column on the far right.",
         ),
         HybridAutomationSelector(
             "review_score_cell",
@@ -378,6 +403,26 @@ SANOMAPRO_REVIEW_OVERVIEW_PROFILE = HybridAutomationPageProfile(
             "$ctrl.showCompletedStudentsOnly",
             "Boolean switch model for the overview filter toggle.",
         ),
+        HybridAutomationDomSignal(
+            "student_participation_state",
+            "icon-status-not-performed | icon-status-open-for-review | icon-status-reviewed",
+            "Per-student submission state is encoded in the name-column status icon classes.",
+        ),
+        HybridAutomationDomSignal(
+            "student_status_titles",
+            "title='Ei suoritusta' | title='Arvioitavissa' | title='Arvioitu, ei julkaistu'",
+            "Tooltip text mirrors whether the student skipped the exam, has an answer waiting for review, or has already been reviewed.",
+        ),
+        HybridAutomationDomSignal(
+            "student_total_score_class",
+            "review-assignment__total-score",
+            "Dedicated total-points column for each student.",
+        ),
+        HybridAutomationDomSignal(
+            "student_grade_class",
+            "review-assignment__grade",
+            "Dedicated grade column for each student.",
+        ),
     ),
     text_markers=(
         "Tulokset",
@@ -389,6 +434,9 @@ SANOMAPRO_REVIEW_OVERVIEW_PROFILE = HybridAutomationPageProfile(
     notes=(
         "The live review matrix uses review-assignment__document cells for per-student per-document navigation.",
         "The inner score label is separate from the outer clickable review-assignment__document wrapper.",
+        "Participation state is exposed in the student-name column via .student-status-icon with state classes for not performed, open for review, and reviewed.",
+        "The rightmost student summary columns use .review-assignment__total-score for points and .review-assignment__grade for grade.",
+        "Greyed-out exercise cells for absent students should not be treated as actionable review targets.",
     ),
 )
 

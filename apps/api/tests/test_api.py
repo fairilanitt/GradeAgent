@@ -351,6 +351,9 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
                 score_awarded=1.0,
                 score_possible=2.0,
                 reviewed=True,
+                participated=True,
+                participation_state="participated",
+                participation_label="green-status-icon",
                 category_name="Text 4",
                 exercise_label="Text 4 · Tehtävä 4",
                 exercise_number="4",
@@ -366,6 +369,7 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
                 total_cell_count=31,
                 reviewed_cell_count=10,
                 pending_cell_count=21,
+                non_participant_cell_count=1,
                 first_pending_selector_index=7,
             ),
             SanomaOverviewExerciseColumn(
@@ -568,6 +572,7 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
     assert len(payload["exercises"]) == 1
     assert payload["exercises"][0]["category_name"] == "Text 4"
     assert payload["exercises"][0]["exercise_number"] == "4"
+    assert payload["exercises"][0]["non_participant_cell_count"] == 1
     assert payload["observed_scores"] == [
         {
             "selector_index": 7,
@@ -576,6 +581,9 @@ def test_gui_overview_grading_shutdown_and_statistics_routes(client, monkeypatch
             "score_awarded": 1.0,
             "score_possible": 2.0,
             "reviewed": True,
+            "participated": True,
+            "participation_state": "participated",
+            "participation_label": "green-status-icon",
             "category_name": "Text 4",
             "exercise_label": "Text 4 · Tehtävä 4",
             "exercise_number": "4",
