@@ -33,10 +33,10 @@ struct GradebookPageView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Arviointikirja")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.ink)
                 Text("Kysy kokeista, opiskelijoista ja näkyvistä pistetiedoista. Arviointikirja käyttää samaa hallittua Sanoma-selainta ja kerää tiedot deterministisesti kokeiden listasta ja yleisnäkymistä.")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.76))
+                    .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -47,7 +47,7 @@ struct GradebookPageView: View {
             } label: {
                 Label("Tyhjennä", systemImage: "trash")
             }
-            .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#7E8A93")))
+            .buttonStyle(LiquidGlassButtonStyle(tint: Theme.neutral))
         }
     }
 
@@ -81,18 +81,18 @@ struct GradebookPageView: View {
                     .scrollContentBackground(.hidden)
                     .padding(12)
                     .frame(minHeight: 94, maxHeight: 120)
-                    .background(Color.black.opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Theme.hairline, lineWidth: 1)
                     )
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(Theme.ink)
 
                 HStack(spacing: 10) {
                     Text("Arviointikirja siirtyy tarvittaessa julkaistujen kokeiden listaan, avaa yleisnäkymiä ja kokoaa vastauksen näkyvistä pisteistä.")
                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.64))
+                        .foregroundStyle(Theme.inkMuted)
 
                     Spacer(minLength: 0)
 
@@ -101,7 +101,7 @@ struct GradebookPageView: View {
                     } label: {
                         Label(store.gradebookRunning ? "Haetaan..." : "Lähetä", systemImage: store.gradebookRunning ? "hourglass" : "arrow.up.circle.fill")
                     }
-                    .buttonStyle(LiquidGlassButtonStyle(tint: Color(hex: "#6F937C")))
+                    .buttonStyle(LiquidGlassButtonStyle(tint: Theme.accent))
                     .disabled(!store.canSendGradebookQuestion)
                 }
             }
@@ -152,24 +152,28 @@ private struct GradebookMessageRow: View {
 
             Text(store.redactedTextForDisplay(message.text))
                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.92))
+                .foregroundStyle(Theme.ink)
                 .textSelection(.enabled)
                 .frame(maxWidth: 760, alignment: .leading)
 
             Text(message.timestamp.formatted(date: .abbreviated, time: .shortened))
                 .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.46))
+                .foregroundStyle(Theme.inkSoft)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(message.role == .assistant ? Color(hex: "#353D45").opacity(0.24) : Color(hex: "#505A65").opacity(0.28))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(message.role == .assistant ? Theme.surface : Theme.accent.opacity(0.08))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    message.role == .assistant ? Theme.hairline : Theme.accent.opacity(0.25),
+                    lineWidth: 1
+                )
         )
+        .shadow(color: Theme.shadow.opacity(0.4), radius: 5, x: 0, y: 2)
     }
 }
 
@@ -183,10 +187,10 @@ private struct GradebookFindingCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(finding.assignmentTitle)
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.ink)
                     Text(finding.assignmentDate)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.60))
+                        .foregroundStyle(Theme.inkSoft)
                 }
                 Spacer(minLength: 0)
                 PromptTag(title: totalScoreText)
@@ -217,19 +221,19 @@ private struct GradebookFindingCard: View {
             if !finding.overviewURL.isEmpty {
                 Text(finding.overviewURL)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(Theme.inkMuted)
                     .textSelection(.enabled)
                     .lineLimit(2)
             }
         }
-        .padding(14)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(hex: "#2D343B").opacity(0.26))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Theme.surfaceAlt)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Theme.hairlineSoft, lineWidth: 1)
         )
     }
 
